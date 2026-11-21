@@ -1,0 +1,6 @@
+{
+  "name": "ZipLink",
+  "description": "Safely extract ZIP archives into unlisted, expiring share pages with browsable files and a deterministic context.md.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
