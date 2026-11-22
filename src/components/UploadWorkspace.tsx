@@ -176,8 +176,8 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
               <li>
                 <strong className="font-medium text-slate-900">Unlisted is not private:</strong>{' '}
                 Anyone who has the generated URL can view and download every file in the archive.
-                Share pages are marked <code className="font-mono text-xs">noindex</code>, are not
-                listed publicly, and are separate from your signed-in private GitHub workspaces.
+                Share pages are marked <code className="font-mono text-xs">noindex</code> and are
+                not listed publicly.
               </li>
               <li>
                 <strong className="font-medium text-slate-900">AI link compatibility:</strong> A
