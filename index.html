@@ -3,18 +3,34 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ZipLink — Expiring ZIP File Sharing &amp; context.md Generator</title>
+    <title>ZipLink — Expiring ZIP File Sharing, Code Editor &amp; context.md Generator</title>
     <meta
       name="description"
-      content="Upload a ZIP archive to safely extract it into an unlisted, expiring share page with browsable files, individual downloads, and a deterministic context.md."
+      content="Upload a ZIP archive to safely extract it into an unlisted, expiring share page with syntax-highlighted code viewing, owner editing, diff view, and a deterministic context.md."
     />
-    <meta property="og:title" content="ZipLink — Expiring ZIP File Sharing &amp; context.md Generator" />
+    <meta property="og:title" content="ZipLink — Expiring ZIP File Sharing, Code Editor &amp; context.md Generator" />
     <meta
       property="og:description"
-      content="Upload a ZIP archive to safely extract it into an unlisted, expiring share page with browsable files, individual downloads, and a deterministic context.md."
+      content="Upload a ZIP archive to safely extract it into an unlisted, expiring share page with syntax-highlighted code viewing, owner editing, diff view, and a deterministic context.md."
     />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('ziplink-theme');
+          var mode = saved === 'light' || saved === 'dark' || saved === 'system' ? saved : 'system';
+          var isDark =
+            mode === 'dark' ||
+            (mode === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -22,7 +38,7 @@
       rel="stylesheet"
     />
   </head>
-  <body class="bg-slate-50 text-slate-900 antialiased selection:bg-blue-100 selection:text-blue-900">
+  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased selection:bg-blue-100 selection:text-blue-900 dark:selection:bg-blue-900/60 dark:selection:text-blue-100">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

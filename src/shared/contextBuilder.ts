@@ -204,7 +204,9 @@ export function buildManifestJson(params: {
   files: ShareFileEntry[];
 }): string {
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    generatedOutputNote:
+      'Generated automatically by ZipLink from the current saved files in this share.',
     shareId: params.shareId,
     archiveName: params.archiveName,
     createdAt: params.createdAt,
@@ -219,6 +221,11 @@ export function buildManifestJson(params: {
       relativePath: f.relativePath,
       sizeBytes: f.sizeBytes,
       sha256: f.sha256,
+      originalSizeBytes: f.originalSizeBytes,
+      originalSha256: f.originalSha256,
+      version: f.version,
+      isEdited: f.isEdited,
+      lastModifiedAt: f.lastModifiedAt,
       isText: f.isText,
       isActiveContent: f.isActiveContent,
       includedInContextMd: f.includedInContextMd,

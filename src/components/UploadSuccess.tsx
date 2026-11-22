@@ -7,6 +7,8 @@ import {
   Trash2,
   AlertTriangle,
   CheckCircle2,
+  KeyRound,
+  Pencil,
 } from 'lucide-react';
 import type { UploadSuccessPayload } from '../shared/types.ts';
 import { formatBytes } from '../shared/zipSecurity.ts';
@@ -14,7 +16,7 @@ import { buildSuggestedPrompt, formatUtcDate } from '../utils/fileTree.ts';
 
 interface UploadSuccessProps {
   result: UploadSuccessPayload;
-  onOpenShare: (shareId: string) => void;
+  onOpenShare: (shareId: string, editToken?: string) => void;
   onResetToUpload: () => void;
 }
 
@@ -103,12 +105,12 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
 
   if (deletedDone) {
     return (
-      <div className="mx-auto max-w-2xl rounded-xl border border-slate-200 bg-white p-8 space-y-5">
-        <div className="flex items-center gap-3 text-slate-900">
-          <CheckCircle2 className="h-6 w-6 text-emerald-700 shrink-0" aria-hidden="true" />
+      <div className="mx-auto max-w-2xl rounded-xl border border-slate-200 bg-white p-8 space-y-5 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center gap-3 text-slate-900 dark:text-slate-100">
+          <CheckCircle2 className="h-6 w-6 text-emerald-700 dark:text-emerald-400 shrink-0" aria-hidden="true" />
           <h1 className="text-2xl font-bold tracking-tight">Share permanently deleted</h1>
         </div>
-        <p className="text-sm leading-relaxed text-slate-600">
+        <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
           All extracted files, <code className="font-mono text-xs">context.md</code>, and metadata
           for <strong>{result.archiveName}</strong> have been removed from storage. Any existing
           links to this share now return an unavailable error.
@@ -117,7 +119,7 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
           <button
             type="button"
             onClick={onResetToUpload}
-            className="rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-blue-700"
+            className="rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500 focus-visible:outline-2 focus-visible:outline-blue-600"
           >
             Upload another ZIP
           </button>
@@ -127,18 +129,18 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8">
-      <div className="rounded-xl border border-slate-200 bg-white p-6 sm:p-8 space-y-6">
+    <div className="mx-auto max-w-4xl space-y-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 sm:p-8 space-y-6 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-emerald-700 text-sm font-semibold">
+            <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 text-sm font-semibold">
               <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>Share link ready</span>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 break-all">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 break-all">
               {result.archiveName}
             </h1>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 font-mono tabular-nums">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 dark:text-slate-400 font-mono tabular-nums">
               <span>{result.totalFiles} files</span>
               <span aria-hidden="true">·</span>
               <span>{formatBytes(result.totalExtractedBytes)} extracted</span>
@@ -155,43 +157,51 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex flex-wrap shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onOpenShare(result.shareId, result.editToken)}
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
+            >
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+              <span>Open owner editor</span>
+            </button>
             <button
               type="button"
               onClick={() => onOpenShare(result.shareId)}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-800 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-700"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
             >
-              <span>Open share page</span>
+              <span>Open read-only share</span>
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>
 
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-700">
-          <strong className="font-semibold text-slate-900">Unlisted, not private:</strong> Anyone
-          with the share URL can browse and download these files until{' '}
-          <span className="font-mono">{formatUtcDate(result.expiresAt)}</span>. Search indexing is
-          disabled via <code className="font-mono">noindex</code>.
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-700 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300">
+          <strong className="font-semibold text-slate-900 dark:text-slate-100">Unlisted, not private:</strong>{' '}
+          Anyone with the public share URL can view and download these files in read-only mode until{' '}
+          <span className="font-mono">{formatUtcDate(result.expiresAt)}</span>. Only the owner edit
+          token grants write access.
         </div>
 
         {result.sensitiveWarnings.length > 0 && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-950 space-y-1">
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-950 space-y-1 dark:border-amber-800/70 dark:bg-amber-950/40 dark:text-amber-200">
             <div className="font-semibold flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0" aria-hidden="true" />
+              <AlertTriangle className="h-4 w-4 text-amber-700 dark:text-amber-400 shrink-0" aria-hidden="true" />
               <span>
                 Reminder: {result.sensitiveWarnings.length} sensitive-looking filename(s) included
               </span>
             </div>
-            <p className="text-amber-900">
+            <p className="text-amber-900 dark:text-amber-300">
               If you published this archive by mistake, use the immediate delete button below.
             </p>
           </div>
         )}
 
-        <div className="space-y-4 border-t border-slate-200 pt-5">
+        <div className="space-y-4 border-t border-slate-200 pt-5 dark:border-slate-800">
           <div className="space-y-1.5">
-            <label htmlFor="share-url-input" className="block text-xs font-semibold text-slate-700">
-              Share page URL
+            <label htmlFor="share-url-input" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Public read-only share URL
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
               <input
@@ -200,16 +210,16 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
                 readOnly
                 value={result.shareUrl}
                 onFocus={(e) => e.currentTarget.select()}
-                className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-700 focus:bg-white focus:outline-none"
+                className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
               />
               <button
                 type="button"
                 onClick={() => void handleCopy('shareUrl', result.shareUrl)}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-700"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
               >
                 {copiedKey === 'shareUrl' ? (
                   <>
-                    <Check className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                    <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
                     <span>Copied</span>
                   </>
                 ) : (
@@ -223,7 +233,7 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="context-url-input" className="block text-xs font-semibold text-slate-700">
+            <label htmlFor="context-url-input" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
               Direct context.md URL
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -233,16 +243,16 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
                 readOnly
                 value={result.contextUrl}
                 onFocus={(e) => e.currentTarget.select()}
-                className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-700 focus:bg-white focus:outline-none"
+                className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
               />
               <button
                 type="button"
                 onClick={() => void handleCopy('contextUrl', result.contextUrl)}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-700"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
               >
                 {copiedKey === 'contextUrl' ? (
                   <>
-                    <Check className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                    <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
                     <span>Copied</span>
                   </>
                 ) : (
@@ -256,13 +266,13 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
           </div>
         </div>
 
-        <div className="space-y-3 border-t border-slate-200 pt-5">
+        <div className="space-y-3 border-t border-slate-200 pt-5 dark:border-slate-800">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-slate-900">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
                 Suggested AI prompt (optional)
               </h2>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-slate-600 dark:text-slate-400">
                 Only works in AI tools that support opening external URLs. Otherwise, copy or
                 download <code className="font-mono">context.md</code> below and attach it directly.
               </p>
@@ -271,11 +281,11 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
               <button
                 type="button"
                 onClick={() => void handleCopy('prompt', suggestedPrompt)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-700"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
               >
                 {copiedKey === 'prompt' ? (
                   <>
-                    <Check className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                    <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
                     <span>Prompt copied</span>
                   </>
                 ) : (
@@ -288,7 +298,7 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
             </div>
           </div>
 
-          <pre className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-xs leading-relaxed text-slate-800 whitespace-pre-wrap">
+          <pre className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-3.5 font-mono text-xs leading-relaxed text-slate-800 whitespace-pre-wrap dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
             {suggestedPrompt}
           </pre>
 
@@ -296,11 +306,11 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
             <button
               type="button"
               onClick={() => void handleCopy('contextContent', result.contextMd)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-700"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               {copiedKey === 'contextContent' ? (
                 <>
-                  <Check className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                  <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
                   <span>context.md copied</span>
                 </>
               ) : (
@@ -314,7 +324,7 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
             <button
               type="button"
               onClick={handleDownloadContextMd}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-700"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Download context.md</span>
@@ -324,7 +334,7 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
               href={result.manifestUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs font-medium text-blue-700 hover:text-blue-800 hover:underline px-2 py-2"
+              className="text-xs font-medium text-blue-700 hover:text-blue-800 hover:underline px-2 py-2 dark:text-blue-400 dark:hover:text-blue-300"
             >
               View manifest.json
             </a>
@@ -332,13 +342,65 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4 dark:border-slate-800 dark:bg-slate-900">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100">
+            <KeyRound className="h-4 w-4 text-blue-700 dark:text-blue-400 shrink-0" aria-hidden="true" />
+            <h2 className="text-base font-semibold">
+              Owner edit link &amp; token (shown once — keep private)
+            </h2>
+          </div>
+          <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+            Keep this private link or token to edit files, view diffs, and restore originals in this
+            workspace. The raw token is stored only as a SHA-256 hash on the server and cannot be
+            recovered later.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label htmlFor="edit-url-input" className="sr-only">
+              Private owner edit URL
+            </label>
+            <input
+              id="edit-url-input"
+              type="text"
+              readOnly
+              value={result.editUrl}
+              onFocus={(e) => e.currentTarget.select()}
+              className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+            <button
+              type="button"
+              onClick={() => void handleCopy('editUrl', result.editUrl)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
+            >
+              {copiedKey === 'editUrl' ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
+                  <span>Copied</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Copy edit link</span>
+                </>
+              )}
+            </button>
+          </div>
+          <div className="font-mono text-xs text-slate-600 dark:text-slate-400 break-all">
+            Edit token: <span className="text-slate-900 dark:text-slate-100 select-all">{result.editToken}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1">
-            <h2 className="text-base font-semibold text-slate-900">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
               One-time delete link &amp; token (shown once)
             </h2>
-            <p className="text-xs leading-relaxed text-slate-600">
+            <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">
               Save this link or token now if you want to delete this share before it expires. For
               security, the raw token is not stored on the server and cannot be recovered later.
             </p>
@@ -356,16 +418,16 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
               readOnly
               value={result.deleteUrl}
               onFocus={(e) => e.currentTarget.select()}
-              className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-700 focus:bg-white focus:outline-none"
+              className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
             />
             <button
               type="button"
               onClick={() => void handleCopy('deleteUrl', result.deleteUrl)}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-700"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               {copiedKey === 'deleteUrl' ? (
                 <>
-                  <Check className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                  <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" aria-hidden="true" />
                   <span>Copied</span>
                 </>
               ) : (
@@ -378,15 +440,15 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-1">
-            <div className="font-mono text-xs text-slate-600 break-all">
-              Token: <span className="text-slate-900 select-all">{result.deleteToken}</span>
+            <div className="font-mono text-xs text-slate-600 dark:text-slate-400 break-all">
+              Token: <span className="text-slate-900 dark:text-slate-100 select-all">{result.deleteToken}</span>
             </div>
 
             {!confirmingDelete ? (
               <button
                 type="button"
                 onClick={() => setConfirmingDelete(true)}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-xs font-semibold text-red-700 transition-colors hover:bg-red-50 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-red-700"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-300 bg-white px-4 py-2 text-xs font-semibold text-red-700 transition-colors hover:bg-red-50 dark:border-red-800 dark:bg-slate-800 dark:text-red-400 dark:hover:bg-red-950/50 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-red-700"
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>Delete immediately</span>
@@ -405,7 +467,7 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
                   type="button"
                   disabled={isDeleting}
                   onClick={() => setConfirmingDelete(false)}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                 >
                   Cancel
                 </button>
@@ -414,7 +476,7 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
           </div>
 
           {deleteError && (
-            <div role="alert" className="text-xs text-red-700">
+            <div role="alert" className="text-xs text-red-700 dark:text-red-400">
               {deleteError}
             </div>
           )}

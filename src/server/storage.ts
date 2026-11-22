@@ -13,6 +13,21 @@ export function isSafeStorageId(id: string): boolean {
   return SAFE_ID_REGEX.test(id);
 }
 
+function normalizeShareRecord(raw: ShareRecord): ShareRecord {
+  return {
+    ...raw,
+    editTokenHash: raw.editTokenHash ?? '',
+    files: (raw.files ?? []).map((f) => ({
+      ...f,
+      originalSizeBytes: f.originalSizeBytes ?? f.sizeBytes,
+      originalSha256: f.originalSha256 ?? f.sha256,
+      version: typeof f.version === 'number' ? f.version : 1,
+      isEdited: Boolean(f.isEdited),
+      lastModifiedAt: f.lastModifiedAt ?? null,
+    })),
+  };
+}
+
 export interface StorageProvider {
   readonly driverName: 'local' | 'gcs';
   init(): Promise<void>;
@@ -27,7 +42,29 @@ export interface StorageProvider {
     shareId: string,
     fileId: string,
   ): Promise<{ stream: Readable; sizeBytes: number } | null>;
+  getFileBytes(shareId: string, fileId: string): Promise<Uint8Array | null>;
   getTextFileContent(shareId: string, fileId: string, maxBytes: number): Promise<string | null>;
+  getOriginalTextFileContent(
+    shareId: string,
+    fileId: string,
+    maxBytes: number,
+  ): Promise<string | null>;
+  updateTextFile(params: {
+    shareId: string;
+    fileId: string;
+    content: string;
+    preserveOriginal: boolean;
+    updatedShare: ShareRecord;
+    updatedContextMd: string;
+    updatedManifestJson: string;
+  }): Promise<void>;
+  restoreOriginalFile(params: {
+    shareId: string;
+    fileId: string;
+    updatedShare: ShareRecord;
+    updatedContextMd: string;
+    updatedManifestJson: string;
+  }): Promise<string | null>;
   getContextMd(shareId: string): Promise<string | null>;
   getManifestJson(shareId: string): Promise<string | null>;
   deleteShare(shareId: string): Promise<boolean>;
@@ -81,6 +118,36 @@ export class LocalStorageProvider implements StorageProvider {
     return target;
   }
 
+  private resolveOriginalBlobFilePath(shareId: string, fileId: string): string {
+    if (!isSafeStorageId(fileId)) {
+      throw new Error('Invalid file identifier.');
+    }
+    const shareDir = this.resolveShareBlobDir(shareId);
+    const originalsDir = path.resolve(shareDir, 'originals');
+    if (!originalsDir.startsWith(shareDir + path.sep)) {
+      throw new Error('Path confinement violation on originals directory.');
+    }
+    const target = path.resolve(originalsDir, fileId);
+    if (!target.startsWith(originalsDir + path.sep)) {
+      throw new Error('Path confinement violation on original blob file.');
+    }
+    return target;
+  }
+
+  private async writeShareMetadataAtomic(share: ShareRecord): Promise<void> {
+    const metaPath = this.resolveShareMetaPath(share.shareId);
+    const tmpMetaPath = `${metaPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    await fsp.writeFile(tmpMetaPath, JSON.stringify(share, null, 2), 'utf8');
+    await fsp.rename(tmpMetaPath, metaPath);
+  }
+
+  private async writeBlobAtomic(destPath: string, content: string): Promise<void> {
+    await fsp.mkdir(path.dirname(destPath), { recursive: true });
+    const tmpPath = `${destPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    await fsp.writeFile(tmpPath, content, 'utf8');
+    await fsp.rename(tmpPath, destPath);
+  }
+
   async saveShare(params: {
     share: ShareRecord;
     blobTempPaths: Map<string, string>;
@@ -119,10 +186,7 @@ export class LocalStorageProvider implements StorageProvider {
         'utf8',
       );
 
-      const metaPath = this.resolveShareMetaPath(share.shareId);
-      const tmpMetaPath = `${metaPath}.tmp-${process.pid}-${Date.now()}`;
-      await fsp.writeFile(tmpMetaPath, JSON.stringify(share, null, 2), 'utf8');
-      await fsp.rename(tmpMetaPath, metaPath);
+      await this.writeShareMetadataAtomic(share);
     } catch (err) {
       await fsp.rm(shareBlobDir, { recursive: true, force: true }).catch(() => undefined);
       throw err;
@@ -134,7 +198,7 @@ export class LocalStorageProvider implements StorageProvider {
     try {
       const metaPath = this.resolveShareMetaPath(shareId);
       const raw = await fsp.readFile(metaPath, 'utf8');
-      return JSON.parse(raw) as ShareRecord;
+      return normalizeShareRecord(JSON.parse(raw) as ShareRecord);
     } catch {
       return null;
     }
@@ -158,6 +222,17 @@ export class LocalStorageProvider implements StorageProvider {
     }
   }
 
+  async getFileBytes(shareId: string, fileId: string): Promise<Uint8Array | null> {
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) return null;
+    try {
+      const filePath = this.resolveBlobFilePath(shareId, fileId);
+      const buf = await fsp.readFile(filePath);
+      return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    } catch {
+      return null;
+    }
+  }
+
   async getTextFileContent(
     shareId: string,
     fileId: string,
@@ -172,6 +247,104 @@ export class LocalStorageProvider implements StorageProvider {
     } catch {
       return null;
     }
+  }
+
+  async getOriginalTextFileContent(
+    shareId: string,
+    fileId: string,
+    maxBytes: number,
+  ): Promise<string | null> {
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) return null;
+    try {
+      const originalPath = this.resolveOriginalBlobFilePath(shareId, fileId);
+      const stat = await fsp.stat(originalPath);
+      if (stat.isFile() && stat.size <= maxBytes) {
+        return await fsp.readFile(originalPath, 'utf8');
+      }
+      return null;
+    } catch {
+      // If no separate original exists yet, the file has never been edited so current == original
+      return await this.getTextFileContent(shareId, fileId, maxBytes);
+    }
+  }
+
+  async updateTextFile(params: {
+    shareId: string;
+    fileId: string;
+    content: string;
+    preserveOriginal: boolean;
+    updatedShare: ShareRecord;
+    updatedContextMd: string;
+    updatedManifestJson: string;
+  }): Promise<void> {
+    const {
+      shareId,
+      fileId,
+      content,
+      preserveOriginal,
+      updatedShare,
+      updatedContextMd,
+      updatedManifestJson,
+    } = params;
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) {
+      throw new Error('Invalid share or file identifier.');
+    }
+
+    const currentFilePath = this.resolveBlobFilePath(shareId, fileId);
+    if (preserveOriginal) {
+      const originalPath = this.resolveOriginalBlobFilePath(shareId, fileId);
+      await fsp.mkdir(path.dirname(originalPath), { recursive: true });
+      try {
+        await fsp.access(originalPath);
+      } catch {
+        // Original snapshot does not exist yet — copy current uploaded file before overwriting
+        await fsp.copyFile(currentFilePath, originalPath);
+      }
+    }
+
+    await this.writeBlobAtomic(currentFilePath, content);
+    await this.writeBlobAtomic(this.resolveBlobFilePath(shareId, 'context.md'), updatedContextMd);
+    await this.writeBlobAtomic(
+      this.resolveBlobFilePath(shareId, 'manifest.json'),
+      updatedManifestJson,
+    );
+    await this.writeShareMetadataAtomic(updatedShare);
+  }
+
+  async restoreOriginalFile(params: {
+    shareId: string;
+    fileId: string;
+    updatedShare: ShareRecord;
+    updatedContextMd: string;
+    updatedManifestJson: string;
+  }): Promise<string | null> {
+    const { shareId, fileId, updatedShare, updatedContextMd, updatedManifestJson } = params;
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) {
+      return null;
+    }
+
+    const currentFilePath = this.resolveBlobFilePath(shareId, fileId);
+    const originalPath = this.resolveOriginalBlobFilePath(shareId, fileId);
+
+    let restoredContent: string;
+    try {
+      restoredContent = await fsp.readFile(originalPath, 'utf8');
+    } catch {
+      try {
+        restoredContent = await fsp.readFile(currentFilePath, 'utf8');
+      } catch {
+        return null;
+      }
+    }
+
+    await this.writeBlobAtomic(currentFilePath, restoredContent);
+    await this.writeBlobAtomic(this.resolveBlobFilePath(shareId, 'context.md'), updatedContextMd);
+    await this.writeBlobAtomic(
+      this.resolveBlobFilePath(shareId, 'manifest.json'),
+      updatedManifestJson,
+    );
+    await this.writeShareMetadataAtomic(updatedShare);
+    return restoredContent;
   }
 
   async getContextMd(shareId: string): Promise<string | null> {
@@ -302,7 +475,7 @@ export class GcsFirestoreStorageProvider implements StorageProvider {
     if (!isSafeStorageId(shareId)) return null;
     const snap = await this.firestore.collection(this.collectionName).doc(shareId).get();
     if (!snap.exists) return null;
-    return snap.data() as ShareRecord;
+    return normalizeShareRecord(snap.data() as ShareRecord);
   }
 
   async getFileStream(
@@ -322,6 +495,17 @@ export class GcsFirestoreStorageProvider implements StorageProvider {
     };
   }
 
+  async getFileBytes(shareId: string, fileId: string): Promise<Uint8Array | null> {
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) return null;
+    const file = this.storage
+      .bucket(this.bucketName)
+      .file(this.blobObjectKey(shareId, `files/${fileId}`));
+    const [exists] = await file.exists();
+    if (!exists) return null;
+    const [buf] = await file.download();
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  }
+
   async getTextFileContent(
     shareId: string,
     fileId: string,
@@ -337,6 +521,125 @@ export class GcsFirestoreStorageProvider implements StorageProvider {
     if (Number(meta.size || 0) > maxBytes) return null;
     const [buf] = await file.download();
     return buf.toString('utf8');
+  }
+
+  async getOriginalTextFileContent(
+    shareId: string,
+    fileId: string,
+    maxBytes: number,
+  ): Promise<string | null> {
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) return null;
+    const origFile = this.storage
+      .bucket(this.bucketName)
+      .file(this.blobObjectKey(shareId, `originals/${fileId}`));
+    const [origExists] = await origFile.exists();
+    if (origExists) {
+      const [meta] = await origFile.getMetadata();
+      if (Number(meta.size || 0) > maxBytes) return null;
+      const [buf] = await origFile.download();
+      return buf.toString('utf8');
+    }
+    return await this.getTextFileContent(shareId, fileId, maxBytes);
+  }
+
+  async updateTextFile(params: {
+    shareId: string;
+    fileId: string;
+    content: string;
+    preserveOriginal: boolean;
+    updatedShare: ShareRecord;
+    updatedContextMd: string;
+    updatedManifestJson: string;
+  }): Promise<void> {
+    const {
+      shareId,
+      fileId,
+      content,
+      preserveOriginal,
+      updatedShare,
+      updatedContextMd,
+      updatedManifestJson,
+    } = params;
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) {
+      throw new Error('Invalid share or file identifier.');
+    }
+
+    const bucket = this.storage.bucket(this.bucketName);
+    const currentFile = bucket.file(this.blobObjectKey(shareId, `files/${fileId}`));
+    if (preserveOriginal) {
+      const origFile = bucket.file(this.blobObjectKey(shareId, `originals/${fileId}`));
+      const [origExists] = await origFile.exists();
+      if (!origExists) {
+        await currentFile.copy(origFile);
+      }
+    }
+
+    await Promise.all([
+      currentFile.save(content, {
+        contentType: 'application/octet-stream',
+        resumable: false,
+      }),
+      bucket
+        .file(this.blobObjectKey(shareId, 'context.md'))
+        .save(updatedContextMd, { contentType: 'text/markdown; charset=utf-8' }),
+      bucket
+        .file(this.blobObjectKey(shareId, 'manifest.json'))
+        .save(updatedManifestJson, { contentType: 'application/json; charset=utf-8' }),
+    ]);
+
+    await this.firestore
+      .collection(this.collectionName)
+      .doc(shareId)
+      .set({
+        ...updatedShare,
+        expireAtDate: new Date(updatedShare.expiresAtMs),
+      });
+  }
+
+  async restoreOriginalFile(params: {
+    shareId: string;
+    fileId: string;
+    updatedShare: ShareRecord;
+    updatedContextMd: string;
+    updatedManifestJson: string;
+  }): Promise<string | null> {
+    const { shareId, fileId, updatedShare, updatedContextMd, updatedManifestJson } = params;
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) return null;
+
+    const bucket = this.storage.bucket(this.bucketName);
+    const origFile = bucket.file(this.blobObjectKey(shareId, `originals/${fileId}`));
+    const currentFile = bucket.file(this.blobObjectKey(shareId, `files/${fileId}`));
+
+    const [origExists] = await origFile.exists();
+    const sourceFile = origExists ? origFile : currentFile;
+    const [sourceExists] = await sourceFile.exists();
+    if (!sourceExists) return null;
+
+    const [buf] = await sourceFile.download();
+    const restoredContent = buf.toString('utf8');
+
+    await Promise.all([
+      currentFile.save(restoredContent, {
+        contentType: 'application/octet-stream',
+        resumable: false,
+      }),
+      bucket
+        .file(this.blobObjectKey(shareId, 'context.md'))
+        .save(updatedContextMd, { contentType: 'text/markdown; charset=utf-8' }),
+      bucket
+        .file(this.blobObjectKey(shareId, 'manifest.json'))
+        .save(updatedManifestJson, { contentType: 'application/json; charset=utf-8' }),
+    ]);
+
+    await this.firestore
+      .collection(this.collectionName)
+      .doc(shareId)
+      .set({
+        ...updatedShare,
+        expireAtDate: new Date(updatedShare.expiresAtMs),
+      });
+
+    return restoredContent;
   }
 
   async getContextMd(shareId: string): Promise<string | null> {

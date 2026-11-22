@@ -1,21 +1,42 @@
 import { useEffect, useState } from 'react';
-import type { AppLimitsInfo, UploadSuccessPayload } from './shared/types.ts';
+import type { AppLimitsInfo, ThemePreference, UploadSuccessPayload } from './shared/types.ts';
+import {
+  applyThemeToDocument,
+  getSavedThemePreference,
+  saveThemePreference,
+} from './utils/theme.ts';
 import { TopBar } from './components/TopBar.tsx';
 import { UploadWorkspace } from './components/UploadWorkspace.tsx';
 import { UploadSuccess } from './components/UploadSuccess.tsx';
 import { ShareView } from './components/ShareView.tsx';
 import { DeleteShareView } from './components/DeleteShareView.tsx';
+import { ModalDialog } from './components/ConfirmModal.tsx';
 
 type RouteState =
   | { view: 'upload' }
-  | { view: 'share'; shareId: string }
+  | { view: 'share'; shareId: string; editToken: string }
   | { view: 'delete'; shareId: string; token: string };
+
+function extractEditTokenFromLocation(): string {
+  const hash = window.location.hash || '';
+  if (hash.startsWith('#')) {
+    const hashParams = new URLSearchParams(hash.slice(1));
+    const fromHash = hashParams.get('edit');
+    if (fromHash) return fromHash;
+  }
+  const searchParams = new URLSearchParams(window.location.search);
+  return searchParams.get('edit') ?? '';
+}
 
 function parseLocationRoute(): RouteState {
   const pathname = window.location.pathname;
   const shareMatch = pathname.match(/^\/s\/([A-Za-z0-9_-]{8,64})\/?$/);
   if (shareMatch) {
-    return { view: 'share', shareId: shareMatch[1] };
+    return {
+      view: 'share',
+      shareId: shareMatch[1],
+      editToken: extractEditTokenFromLocation(),
+    };
   }
 
   const deleteMatch = pathname.match(/^\/delete\/([A-Za-z0-9_-]{8,64})\/?$/);
@@ -36,12 +57,38 @@ export default function App() {
   const [uploadSuccess, setUploadSuccess] = useState<UploadSuccessPayload | null>(null);
   const [limits, setLimits] = useState<AppLimitsInfo | null>(null);
 
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
+    getSavedThemePreference(),
+  );
+  const [effectiveTheme, setEffectiveTheme] = useState<'light' | 'dark'>(() =>
+    applyThemeToDocument(getSavedThemePreference()),
+  );
+  const [shareDirty, setShareDirty] = useState(false);
+  const [leavePromptOpen, setLeavePromptOpen] = useState(false);
+
   useEffect(() => {
-    const handlePopState = () => {
+    setEffectiveTheme(applyThemeToDocument(themePreference));
+    saveThemePreference(themePreference);
+
+    if (themePreference !== 'system' || !window.matchMedia) return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => {
+      setEffectiveTheme(applyThemeToDocument('system'));
+    };
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [themePreference]);
+
+  useEffect(() => {
+    const handleLocationChange = () => {
       setRoute(parseLocationRoute());
     };
-    window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('popstate', handleLocationChange);
+    window.addEventListener('hashchange', handleLocationChange);
+    return () => {
+      window.removeEventListener('popstate', handleLocationChange);
+      window.removeEventListener('hashchange', handleLocationChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -69,26 +116,41 @@ export default function App() {
   }, [route.view]);
 
   const navigateTo = (path: string) => {
-    if (window.location.pathname + window.location.search !== path) {
+    if (window.location.pathname + window.location.search + window.location.hash !== path) {
       window.history.pushState(null, '', path);
     }
     setRoute(parseLocationRoute());
+    setShareDirty(false);
     window.scrollTo({ top: 0, behavior: 'auto' });
   };
 
-  const handleNavigateHome = () => {
+  const performNavigateHome = () => {
     setUploadSuccess(null);
+    setLeavePromptOpen(false);
     navigateTo('/');
+  };
+
+  const handleNavigateHome = () => {
+    if (route.view === 'share' && shareDirty) {
+      setLeavePromptOpen(true);
+      return;
+    }
+    performNavigateHome();
   };
 
   const activeTopBarRoute =
     route.view === 'share' ? 'share' : route.view === 'delete' ? 'delete' : 'upload';
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-      <TopBar activeRoute={activeTopBarRoute} onNavigateHome={handleNavigateHome} />
+    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <TopBar
+        activeRoute={activeTopBarRoute}
+        onNavigateHome={handleNavigateHome}
+        themePreference={themePreference}
+        onThemeChange={setThemePreference}
+      />
 
-      <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+      <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
         {route.view === 'upload' && !uploadSuccess && (
           <UploadWorkspace
             limits={limits}
@@ -102,28 +164,40 @@ export default function App() {
         {route.view === 'upload' && uploadSuccess && (
           <UploadSuccess
             result={uploadSuccess}
-            onOpenShare={(shareId) => navigateTo(`/s/${encodeURIComponent(shareId)}`)}
-            onResetToUpload={handleNavigateHome}
+            onOpenShare={(shareId, editToken) => {
+              const target = editToken
+                ? `/s/${encodeURIComponent(shareId)}#edit=${encodeURIComponent(editToken)}`
+                : `/s/${encodeURIComponent(shareId)}`;
+              navigateTo(target);
+            }}
+            onResetToUpload={performNavigateHome}
           />
         )}
 
         {route.view === 'share' && (
-          <ShareView shareId={route.shareId} onNavigateHome={handleNavigateHome} />
+          <ShareView
+            shareId={route.shareId}
+            initialEditToken={route.editToken}
+            effectiveTheme={effectiveTheme}
+            maxTextPreviewBytes={limits?.maxTextPreviewBytes}
+            onNavigateHome={performNavigateHome}
+            onDirtyChange={setShareDirty}
+          />
         )}
 
         {route.view === 'delete' && (
           <DeleteShareView
             shareId={route.shareId}
             initialToken={route.token}
-            onNavigateHome={handleNavigateHome}
+            onNavigateHome={performNavigateHome}
           />
         )}
       </main>
 
-      <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <footer className="border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-5 text-xs text-slate-500 dark:text-slate-400 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <span>
-            ZipLink · Unlisted, expiring archive sharing &amp; deterministic context.md conversion
+            ZipLink · Unlisted, expiring archive sharing, code editor &amp; deterministic context.md
           </span>
           <span>
             {limits?.storageDriver === 'gcs'
@@ -132,6 +206,35 @@ export default function App() {
           </span>
         </div>
       </footer>
+
+      <ModalDialog
+        open={leavePromptOpen}
+        title="Leave with unsaved changes?"
+        onClose={() => setLeavePromptOpen(false)}
+      >
+        <div className="space-y-4 text-sm text-slate-700 dark:text-slate-300">
+          <p>
+            You have unsaved edits in this workspace. If you navigate away now, those unsaved
+            changes will be lost.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setLeavePromptOpen(false)}
+              className="rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              Stay in editor
+            </button>
+            <button
+              type="button"
+              onClick={performNavigateHome}
+              className="rounded-lg bg-amber-700 px-3.5 py-2 text-xs font-semibold text-white hover:bg-amber-800"
+            >
+              Discard &amp; leave
+            </button>
+          </div>
+        </div>
+      </ModalDialog>
     </div>
   );
 }

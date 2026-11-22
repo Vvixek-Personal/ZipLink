@@ -7,6 +7,7 @@ import { buildFileTree, type FileTreeNode } from '../utils/fileTree.ts';
 interface FileTreeProps {
   files: ShareFileEntry[];
   selectedView: { kind: 'context' } | { kind: 'manifest' } | { kind: 'file'; fileId: string };
+  dirtyFileId?: string | null;
   onSelectContext: () => void;
   onSelectManifest: () => void;
   onSelectFile: (file: ShareFileEntry) => void;
@@ -15,6 +16,7 @@ interface FileTreeProps {
 export const FileTree: React.FC<FileTreeProps> = ({
   files,
   selectedView,
+  dirtyFileId,
   onSelectContext,
   onSelectManifest,
   onSelectFile,
@@ -43,11 +45,13 @@ export const FileTree: React.FC<FileTreeProps> = ({
   };
 
   const renderFileIcon = (entry: ShareFileEntry) => {
-    if (!entry.isText) return <File className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />;
-    if (entry.isActiveContent) {
-      return <FileCode className="h-4 w-4 shrink-0 text-blue-700" aria-hidden="true" />;
+    if (!entry.isText) {
+      return <File className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />;
     }
-    return <FileText className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />;
+    if (entry.isActiveContent) {
+      return <FileCode className="h-4 w-4 shrink-0 text-blue-700 dark:text-blue-400" aria-hidden="true" />;
+    }
+    return <FileText className="h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />;
   };
 
   const renderNode = (node: FileTreeNode, depth: number) => {
@@ -62,18 +66,18 @@ export const FileTree: React.FC<FileTreeProps> = ({
             onClick={() => toggleFolder(node.path)}
             aria-expanded={isExpanded}
             style={{ paddingLeft: `${paddingLeft}px` }}
-            className="flex w-full items-center justify-between gap-2 py-2 pr-3 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-blue-700"
+            className="flex w-full items-center justify-between gap-2 py-2 pr-3 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80 focus-visible:outline-2 focus-visible:outline-blue-600"
           >
             <span className="flex min-w-0 items-center gap-2">
               {isExpanded ? (
-                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
               ) : (
-                <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
               )}
-              <Folder className="h-4 w-4 shrink-0 text-slate-500" aria-hidden="true" />
+              <Folder className="h-4 w-4 shrink-0 text-slate-500 dark:text-slate-400" aria-hidden="true" />
               <span className="truncate">{node.name}</span>
             </span>
-            <span className="shrink-0 font-mono text-xs tabular-nums text-slate-400">
+            <span className="shrink-0 font-mono text-xs tabular-nums text-slate-400 dark:text-slate-500">
               {node.fileCount}
             </span>
           </button>
@@ -85,6 +89,8 @@ export const FileTree: React.FC<FileTreeProps> = ({
     }
 
     const isSelected = selectedView.kind === 'file' && selectedView.fileId === node.entry.id;
+    const isDirty = dirtyFileId === node.entry.id;
+
     return (
       <li key={`file:${node.entry.id}`}>
         <button
@@ -92,18 +98,35 @@ export const FileTree: React.FC<FileTreeProps> = ({
           onClick={() => onSelectFile(node.entry)}
           aria-current={isSelected ? 'true' : undefined}
           style={{ paddingLeft: `${paddingLeft + 20}px` }}
-          className={`flex w-full items-center justify-between gap-2 py-2 pr-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-700 ${
+          className={`flex w-full items-center justify-between gap-2 py-2 pr-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
             isSelected
-              ? 'bg-blue-50 font-medium text-blue-900'
-              : 'text-slate-700 hover:bg-slate-100'
+              ? 'bg-blue-50 font-medium text-blue-900 dark:bg-blue-950/60 dark:text-blue-200'
+              : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80'
           }`}
         >
           <span className="flex min-w-0 items-center gap-2">
             {renderFileIcon(node.entry)}
             <span className="truncate">{node.name}</span>
           </span>
-          <span className="shrink-0 font-mono text-xs tabular-nums text-slate-500">
-            {formatBytes(node.entry.sizeBytes)}
+          <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
+            {isDirty ? (
+              <span
+                className="font-semibold text-amber-700 dark:text-amber-400"
+                title="Unsaved changes"
+              >
+                Unsaved
+              </span>
+            ) : node.entry.isEdited ? (
+              <span
+                className="font-semibold text-blue-700 dark:text-blue-400"
+                title="Edited and saved"
+              >
+                Edited
+              </span>
+            ) : null}
+            <span className="text-slate-500 dark:text-slate-400">
+              {formatBytes(node.entry.sizeBytes)}
+            </span>
           </span>
         </button>
       </li>
@@ -113,21 +136,22 @@ export const FileTree: React.FC<FileTreeProps> = ({
   return (
     <aside
       aria-label="Share archive files"
-      className="flex flex-col border border-slate-200 bg-white rounded-xl overflow-hidden"
+      className="flex flex-col border border-slate-200 bg-white rounded-xl overflow-hidden dark:border-slate-800 dark:bg-slate-900"
     >
-      <div className="border-b border-slate-200 p-3 space-y-2">
-        <div className="text-xs font-semibold text-slate-600">
-          Generated outputs
+      <div className="border-b border-slate-200 p-3 space-y-2 dark:border-slate-800">
+        <div className="flex items-center justify-between text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <span>Generated outputs</span>
+          <span className="font-normal text-slate-500 dark:text-slate-400">Auto-updated</span>
         </div>
         <div className="grid grid-cols-2 gap-1.5">
           <button
             type="button"
             onClick={onSelectContext}
             aria-current={selectedView.kind === 'context' ? 'page' : undefined}
-            className={`rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-blue-700 ${
+            className={`rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
               selectedView.kind === 'context'
-                ? 'bg-blue-700 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-blue-700 text-white dark:bg-blue-600'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             context.md
@@ -136,10 +160,10 @@ export const FileTree: React.FC<FileTreeProps> = ({
             type="button"
             onClick={onSelectManifest}
             aria-current={selectedView.kind === 'manifest' ? 'page' : undefined}
-            className={`rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-blue-700 ${
+            className={`rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
               selectedView.kind === 'manifest'
-                ? 'bg-blue-700 text-white'
-                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                ? 'bg-blue-700 text-white dark:bg-blue-600'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
             }`}
           >
             manifest.json
@@ -147,13 +171,13 @@ export const FileTree: React.FC<FileTreeProps> = ({
         </div>
       </div>
 
-      <div className="border-b border-slate-200 p-3">
+      <div className="border-b border-slate-200 p-3 dark:border-slate-800">
         <label htmlFor="file-tree-filter" className="sr-only">
           Filter files by path
         </label>
         <div className="relative">
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
             aria-hidden="true"
           />
           <input
@@ -162,14 +186,14 @@ export const FileTree: React.FC<FileTreeProps> = ({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter files..."
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-700 focus:bg-white focus:outline-none"
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:bg-slate-900"
           />
         </div>
       </div>
 
       <div className="max-h-[540px] overflow-y-auto py-1">
         {treeNodes.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-slate-500">
+          <div className="px-4 py-6 text-center text-sm text-slate-500 dark:text-slate-400">
             No files match &ldquo;{query}&rdquo;.
           </div>
         ) : (

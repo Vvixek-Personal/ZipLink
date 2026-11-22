@@ -5,11 +5,17 @@ import path from 'node:path';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
+import { zipSync } from 'fflate';
 import { loadConfig, type ZipLinkConfig } from './config.ts';
 import { createStorageProvider, isSafeStorageId, type StorageProvider } from './storage.ts';
 import { safelyExtractZipToTempDir, ZipExtractionError } from './zipExtractor.ts';
-import { buildContextMarkdown, buildManifestJson } from '../shared/contextBuilder.ts';
 import {
+  buildContextMarkdown,
+  buildManifestJson,
+  type TextFileContentInput,
+} from '../shared/contextBuilder.ts';
+import {
+  classifyTextContent,
   detectSensitiveFilenames,
   isValidExpiryOption,
   resolveExpiryTimestamp,
@@ -19,25 +25,43 @@ import {
 } from '../shared/zipSecurity.ts';
 import type {
   ExpiryOption,
+  FileConflictPayload,
   PublicShareMetadata,
+  ShareFileEntry,
   ShareRecord,
   UploadSuccessPayload,
 } from '../shared/types.ts';
 
-function sha256Hex(value: string): string {
-  return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+function sha256Hex(value: string | Buffer): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
 }
 
 function timingSafeHexEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
+  if (!a || !b || a.length !== b.length) return false;
   const bufA = Buffer.from(a, 'utf8');
   const bufB = Buffer.from(b, 'utf8');
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
 function stripPrivateShareFields(record: ShareRecord): PublicShareMetadata {
-  const { deleteTokenHash: _omitted, ...publicMeta } = record;
+  const {
+    deleteTokenHash: _omittedDelete,
+    editTokenHash: _omittedEdit,
+    ...publicMeta
+  } = record;
   return publicMeta;
+}
+
+function extractEditToken(req: Request): string {
+  const authHeader = req.get('authorization');
+  if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+    return authHeader.replace(/^Bearer\s+/i, '').trim();
+  }
+  const headerToken = req.get('x-edit-token');
+  if (headerToken) {
+    return headerToken.trim();
+  }
+  return '';
 }
 
 function resolveBaseUrl(req: Request): string {
@@ -72,6 +96,28 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
+  // Per-share lock queue to serialize writes and prevent optimistic-concurrency races
+  const shareLocks = new Map<string, Promise<void>>();
+  async function withShareLock<T>(shareId: string, task: () => Promise<T>): Promise<T> {
+    const previous = shareLocks.get(shareId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => current, () => current);
+    shareLocks.set(shareId, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await task();
+    } finally {
+      release();
+      if (shareLocks.get(shareId) === tail) {
+        shareLocks.delete(shareId);
+      }
+    }
+  }
+
   // Global security headers
   app.use((_req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -88,7 +134,9 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
     next();
   });
 
-  app.use(express.json({ limit: '64kb' }));
+  // Size JSON body limit to comfortably accept text edits up to maxTextPreviewBytes
+  const jsonBodyLimitBytes = Math.max(1024 * 1024, Math.ceil(config.maxTextPreviewBytes * 1.5));
+  app.use(express.json({ limit: jsonBodyLimitBytes }));
 
   const uploadTempRoot = path.join(os.tmpdir(), 'ziplink-uploads');
   await fsp.mkdir(uploadTempRoot, { recursive: true });
@@ -175,6 +223,97 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
     return record;
   }
 
+  function verifyEditAuthorizationOrRespond(
+    req: Request,
+    res: Response,
+    record: ShareRecord,
+  ): boolean {
+    const rawToken = extractEditToken(req);
+    if (!rawToken || rawToken.length < 16) {
+      res.status(401).json({
+        error: 'An owner edit token is required to modify files in this share.',
+      });
+      return false;
+    }
+    if (!record.editTokenHash) {
+      res.status(403).json({
+        error: 'This share does not support owner editing.',
+      });
+      return false;
+    }
+    const candidateHash = sha256Hex(rawToken);
+    if (!timingSafeHexEqual(candidateHash, record.editTokenHash)) {
+      res.status(403).json({
+        error: 'Invalid owner edit token. Public share links are read-only.',
+      });
+      return false;
+    }
+    return true;
+  }
+
+  async function rebuildGeneratedOutputsForShare(
+    share: ShareRecord,
+    updatedFiles: ShareFileEntry[],
+    overrideContent?: { fileId: string; content: string },
+  ): Promise<{
+    updatedShare: ShareRecord;
+    contextMd: string;
+    manifestJson: string;
+  }> {
+    const entries: TextFileContentInput[] = await Promise.all(
+      updatedFiles.map(async (file) => {
+        if (!file.isText || file.sizeBytes > config.maxTextPreviewBytes) {
+          return { file, textContent: null };
+        }
+        if (overrideContent && overrideContent.fileId === file.id) {
+          return { file, textContent: overrideContent.content };
+        }
+        const content = await storage.getTextFileContent(
+          share.shareId,
+          file.id,
+          config.maxTextPreviewBytes,
+        );
+        return { file, textContent: content };
+      }),
+    );
+
+    const totalExtractedBytes = updatedFiles.reduce((sum, f) => sum + f.sizeBytes, 0);
+
+    const contextResult = buildContextMarkdown({
+      shareId: share.shareId,
+      archiveName: share.archiveName,
+      createdAt: share.createdAt,
+      expiresAt: share.expiresAt,
+      entries,
+      maxContextBytes: config.maxContextMdBytes,
+    });
+
+    const manifestJson = buildManifestJson({
+      shareId: share.shareId,
+      archiveName: share.archiveName,
+      createdAt: share.createdAt,
+      expiresAt: share.expiresAt,
+      totalExtractedBytes,
+      sensitiveWarnings: share.sensitiveWarnings,
+      files: contextResult.updatedFiles,
+    });
+
+    const updatedShare: ShareRecord = {
+      ...share,
+      totalFiles: contextResult.updatedFiles.length,
+      totalExtractedBytes,
+      contextIncludedCount: contextResult.includedCount,
+      contextOmittedCount: contextResult.omittedCount,
+      files: contextResult.updatedFiles,
+    };
+
+    return {
+      updatedShare,
+      contextMd: contextResult.contextMd,
+      manifestJson,
+    };
+  }
+
   // Upload & extract ZIP endpoint
   app.post(
     '/api/shares',
@@ -224,6 +363,8 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
         const shareId = crypto.randomBytes(24).toString('base64url');
         const deleteToken = crypto.randomBytes(32).toString('base64url');
         const deleteTokenHash = sha256Hex(deleteToken);
+        const editToken = crypto.randomBytes(32).toString('base64url');
+        const editTokenHash = sha256Hex(editToken);
 
         const createdMs = nowFn();
         const createdAt = new Date(createdMs).toISOString();
@@ -267,6 +408,7 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
           sensitiveWarnings,
           files: contextResult.updatedFiles,
           deleteTokenHash,
+          editTokenHash,
         };
 
         await storage.saveShare({
@@ -280,6 +422,8 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
         const payload: UploadSuccessPayload = {
           shareId,
           shareUrl: `${baseUrl}/s/${shareId}`,
+          editUrl: `${baseUrl}/s/${shareId}#edit=${encodeURIComponent(editToken)}`,
+          editToken,
           contextUrl: `${baseUrl}/s/${shareId}/context.md`,
           manifestUrl: `${baseUrl}/s/${shareId}/manifest.json`,
           deleteUrl: `${baseUrl}/delete/${shareId}?token=${encodeURIComponent(deleteToken)}`,
@@ -314,6 +458,14 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
     const share = await resolveActiveShareOrRespond(req.params.shareId, res);
     if (!share) return;
     res.json(stripPrivateShareFields(share));
+  });
+
+  // Verify owner edit token endpoint
+  app.post('/api/shares/:shareId/edit-auth', readDeleteLimiter, async (req, res) => {
+    const share = await resolveActiveShareOrRespond(req.params.shareId, res);
+    if (!share) return;
+    if (!verifyEditAuthorizationOrRespond(req, res, share)) return;
+    res.json({ canEdit: true, shareId: share.shareId });
   });
 
   // Safe escaped-text preview endpoint (returns JSON string, never raw HTML)
@@ -353,10 +505,335 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
       id: fileEntry.id,
       relativePath: fileEntry.relativePath,
       sizeBytes: fileEntry.sizeBytes,
+      sha256: fileEntry.sha256,
+      originalSha256: fileEntry.originalSha256,
+      version: fileEntry.version,
+      isEdited: fileEntry.isEdited,
+      lastModifiedAt: fileEntry.lastModifiedAt,
       isActiveContent: fileEntry.isActiveContent,
       content,
     });
   });
+
+  // Original uploaded text content endpoint (for Diff vs Original and Restore confirmation)
+  app.get('/api/shares/:shareId/files/:fileId/original', readDeleteLimiter, async (req, res) => {
+    const share = await resolveActiveShareOrRespond(req.params.shareId, res);
+    if (!share) return;
+
+    const fileEntry = share.files.find((f) => f.id === req.params.fileId);
+    if (!fileEntry) {
+      res.status(404).json({ error: 'File not found in this share.' });
+      return;
+    }
+
+    if (!fileEntry.isText) {
+      res.status(415).json({ error: 'Original text diff is only available for text files.' });
+      return;
+    }
+
+    if (fileEntry.originalSizeBytes > config.maxTextPreviewBytes) {
+      res.status(413).json({
+        error: `Original file exceeds the ${formatBytes(config.maxTextPreviewBytes)} inline preview limit.`,
+      });
+      return;
+    }
+
+    const content = await storage.getOriginalTextFileContent(
+      share.shareId,
+      fileEntry.id,
+      config.maxTextPreviewBytes,
+    );
+    if (content === null) {
+      res.status(404).json({ error: 'Original file contents were not found.' });
+      return;
+    }
+
+    res.json({
+      id: fileEntry.id,
+      relativePath: fileEntry.relativePath,
+      sizeBytes: fileEntry.originalSizeBytes,
+      sha256: fileEntry.originalSha256,
+      content,
+    });
+  });
+
+  // Save edited text file (requires owner edit token + optimistic concurrency check)
+  app.put('/api/shares/:shareId/files/:fileId', readDeleteLimiter, async (req, res) => {
+    const { shareId, fileId } = req.params;
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) {
+      res.status(404).json({ error: 'Share or file not found.' });
+      return;
+    }
+
+    const body = req.body as {
+      content?: unknown;
+      expectedSha256?: unknown;
+      expectedVersion?: unknown;
+    } | null;
+
+    if (!body || typeof body.content !== 'string') {
+      res.status(400).json({ error: 'Request body must include string field "content".' });
+      return;
+    }
+
+    const nextContent = body.content;
+
+    await withShareLock(shareId, async () => {
+      const share = await resolveActiveShareOrRespond(shareId, res);
+      if (!share) return;
+
+      if (!verifyEditAuthorizationOrRespond(req, res, share)) return;
+
+      const fileIndex = share.files.findIndex((f) => f.id === fileId);
+      if (fileIndex === -1) {
+        res.status(404).json({ error: 'File not found in this share.' });
+        return;
+      }
+
+      const currentFile = share.files[fileIndex];
+      if (!currentFile.isText) {
+        res.status(415).json({ error: 'Binary or non-text files are read-only and cannot be edited.' });
+        return;
+      }
+
+      if (currentFile.sizeBytes > config.maxTextPreviewBytes) {
+        res.status(413).json({
+          error: `Files larger than ${formatBytes(config.maxTextPreviewBytes)} are read-only.`,
+        });
+        return;
+      }
+
+      const nextBuffer = Buffer.from(nextContent, 'utf8');
+      if (nextBuffer.length > config.maxTextPreviewBytes) {
+        res.status(413).json({
+          error: `Edited content (${formatBytes(nextBuffer.length)}) exceeds the ${formatBytes(config.maxTextPreviewBytes)} per-file text limit.`,
+        });
+        return;
+      }
+
+      const nextTotalBytes = share.totalExtractedBytes - currentFile.sizeBytes + nextBuffer.length;
+      if (nextTotalBytes > config.maxExtractedBytes) {
+        res.status(413).json({
+          error: `Saving would exceed the ${formatBytes(config.maxExtractedBytes)} archive size limit.`,
+        });
+        return;
+      }
+
+      const textCheck = classifyTextContent(currentFile.relativePath, nextBuffer);
+      if (!textCheck.isText) {
+        res.status(400).json({
+          error: `Edited content is not valid UTF-8 text (${textCheck.reason || 'invalid characters'}).`,
+        });
+        return;
+      }
+
+      // Optimistic concurrency check against current saved sha256 and/or version
+      const expectedSha256 = typeof body.expectedSha256 === 'string' ? body.expectedSha256 : null;
+      const expectedVersion =
+        typeof body.expectedVersion === 'number' && Number.isFinite(body.expectedVersion)
+          ? body.expectedVersion
+          : null;
+
+      if (
+        (expectedSha256 !== null && expectedSha256 !== currentFile.sha256) ||
+        (expectedVersion !== null && expectedVersion !== currentFile.version)
+      ) {
+        const latestContent = await storage.getTextFileContent(
+          share.shareId,
+          currentFile.id,
+          config.maxTextPreviewBytes,
+        );
+        const conflictPayload: FileConflictPayload = {
+          error:
+            'This file was modified elsewhere since you opened it. Review the latest saved version before overwriting.',
+          conflict: true,
+          currentSha256: currentFile.sha256,
+          currentVersion: currentFile.version,
+          currentContent: latestContent,
+          currentFile,
+        };
+        res.status(409).json(conflictPayload);
+        return;
+      }
+
+      const nextSha256 = sha256Hex(nextBuffer);
+      const modifiedIso = new Date(nowFn()).toISOString();
+      const updatedEntry: ShareFileEntry = {
+        ...currentFile,
+        sizeBytes: nextBuffer.length,
+        sha256: nextSha256,
+        version: currentFile.version + 1,
+        isEdited: nextSha256 !== currentFile.originalSha256,
+        lastModifiedAt: modifiedIso,
+      };
+
+      const nextFiles = share.files.map((f, idx) => (idx === fileIndex ? updatedEntry : f));
+      const { updatedShare, contextMd, manifestJson } = await rebuildGeneratedOutputsForShare(
+        share,
+        nextFiles,
+        { fileId: currentFile.id, content: nextContent },
+      );
+
+      await storage.updateTextFile({
+        shareId: share.shareId,
+        fileId: currentFile.id,
+        content: nextContent,
+        preserveOriginal: true,
+        updatedShare,
+        updatedContextMd: contextMd,
+        updatedManifestJson: manifestJson,
+      });
+
+      const savedEntry = updatedShare.files.find((f) => f.id === currentFile.id) ?? updatedEntry;
+      res.json({
+        file: savedEntry,
+        share: stripPrivateShareFields(updatedShare),
+        content: nextContent,
+      });
+    });
+  });
+
+  // Restore original uploaded file (requires owner edit token + optimistic concurrency check)
+  app.post('/api/shares/:shareId/files/:fileId/restore', readDeleteLimiter, async (req, res) => {
+    const { shareId, fileId } = req.params;
+    if (!isSafeStorageId(shareId) || !isSafeStorageId(fileId)) {
+      res.status(404).json({ error: 'Share or file not found.' });
+      return;
+    }
+
+    const body = (req.body ?? {}) as {
+      expectedSha256?: unknown;
+      expectedVersion?: unknown;
+    };
+
+    await withShareLock(shareId, async () => {
+      const share = await resolveActiveShareOrRespond(shareId, res);
+      if (!share) return;
+
+      if (!verifyEditAuthorizationOrRespond(req, res, share)) return;
+
+      const fileIndex = share.files.findIndex((f) => f.id === fileId);
+      if (fileIndex === -1) {
+        res.status(404).json({ error: 'File not found in this share.' });
+        return;
+      }
+
+      const currentFile = share.files[fileIndex];
+      if (!currentFile.isText) {
+        res.status(415).json({ error: 'Binary or non-text files cannot be restored via text editor.' });
+        return;
+      }
+
+      const expectedSha256 = typeof body.expectedSha256 === 'string' ? body.expectedSha256 : null;
+      const expectedVersion =
+        typeof body.expectedVersion === 'number' && Number.isFinite(body.expectedVersion)
+          ? body.expectedVersion
+          : null;
+
+      if (
+        (expectedSha256 !== null && expectedSha256 !== currentFile.sha256) ||
+        (expectedVersion !== null && expectedVersion !== currentFile.version)
+      ) {
+        const latestContent = await storage.getTextFileContent(
+          share.shareId,
+          currentFile.id,
+          config.maxTextPreviewBytes,
+        );
+        const conflictPayload: FileConflictPayload = {
+          error:
+            'This file changed on the server since you opened it. Reload the latest version before restoring.',
+          conflict: true,
+          currentSha256: currentFile.sha256,
+          currentVersion: currentFile.version,
+          currentContent: latestContent,
+          currentFile,
+        };
+        res.status(409).json(conflictPayload);
+        return;
+      }
+
+      const originalContent = await storage.getOriginalTextFileContent(
+        share.shareId,
+        currentFile.id,
+        config.maxTextPreviewBytes,
+      );
+      if (originalContent === null) {
+        res.status(404).json({ error: 'Original uploaded file version was not found.' });
+        return;
+      }
+
+      const origBuffer = Buffer.from(originalContent, 'utf8');
+      const restoredEntry: ShareFileEntry = {
+        ...currentFile,
+        sizeBytes: origBuffer.length,
+        sha256: currentFile.originalSha256,
+        version: currentFile.version + 1,
+        isEdited: false,
+        lastModifiedAt: new Date(nowFn()).toISOString(),
+      };
+
+      const nextFiles = share.files.map((f, idx) => (idx === fileIndex ? restoredEntry : f));
+      const { updatedShare, contextMd, manifestJson } = await rebuildGeneratedOutputsForShare(
+        share,
+        nextFiles,
+        { fileId: currentFile.id, content: originalContent },
+      );
+
+      const restored = await storage.restoreOriginalFile({
+        shareId: share.shareId,
+        fileId: currentFile.id,
+        updatedShare,
+        updatedContextMd: contextMd,
+        updatedManifestJson: manifestJson,
+      });
+
+      if (restored === null) {
+        res.status(404).json({ error: 'Original uploaded file version could not be restored.' });
+        return;
+      }
+
+      const savedEntry = updatedShare.files.find((f) => f.id === currentFile.id) ?? restoredEntry;
+      res.json({
+        file: savedEntry,
+        share: stripPrivateShareFields(updatedShare),
+        content: restored,
+      });
+    });
+  });
+
+  // Download full archive (including all saved edits) as a ZIP
+  const serveEditedZipDownload = async (req: Request, res: Response) => {
+    const share = await resolveActiveShareOrRespond(req.params.shareId, res);
+    if (!share) return;
+
+    const zipEntries: Record<string, Uint8Array> = {};
+    for (const file of share.files) {
+      const bytes = await storage.getFileBytes(share.shareId, file.id);
+      if (bytes !== null) {
+        zipEntries[file.relativePath] = bytes;
+      }
+    }
+
+    const zipped = zipSync(zipEntries, { level: 6 });
+    const hasEdits = share.files.some((f) => f.isEdited);
+    const rawZipName = hasEdits
+      ? share.archiveName.replace(/\.zip$/i, '') + '-edited.zip'
+      : share.archiveName;
+    const { asciiFallback, utf8Encoded } = sanitizeContentDispositionFilename(rawZipName);
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`,
+    );
+    res.setHeader('Content-Length', String(zipped.length));
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(Buffer.from(zipped.buffer, zipped.byteOffset, zipped.byteLength));
+  };
+
+  app.get('/s/:shareId/download.zip', readDeleteLimiter, serveEditedZipDownload);
+  app.get('/api/shares/:shareId/download.zip', readDeleteLimiter, serveEditedZipDownload);
 
   // Serve raw individual file download with strict safe headers
   const serveFileDownload = async (req: Request, res: Response) => {

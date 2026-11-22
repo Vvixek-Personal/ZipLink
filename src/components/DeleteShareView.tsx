@@ -44,19 +44,19 @@ export const DeleteShareView: React.FC<DeleteShareViewProps> = ({
 
   if (deleted) {
     return (
-      <div className="mx-auto max-w-lg rounded-xl border border-slate-200 bg-white p-8 space-y-4">
+      <div className="mx-auto max-w-lg rounded-xl border border-slate-200 bg-white p-8 space-y-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-3">
-          <CheckCircle2 className="h-6 w-6 text-emerald-700 shrink-0" aria-hidden="true" />
-          <h1 className="text-xl font-bold text-slate-900">Share deleted</h1>
+          <CheckCircle2 className="h-6 w-6 text-emerald-700 dark:text-emerald-400 shrink-0" aria-hidden="true" />
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Share deleted</h1>
         </div>
-        <p className="text-sm text-slate-600">
-          All files and generated outputs for share <code className="font-mono text-xs">{shareId}</code>{' '}
-          have been permanently removed.
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          All files, saved edits, originals, and generated outputs for share{' '}
+          <code className="font-mono text-xs">{shareId}</code> have been permanently removed.
         </p>
         <button
           type="button"
           onClick={onNavigateHome}
-          className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+          className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500"
         >
           Back to upload
         </button>
@@ -67,14 +67,14 @@ export const DeleteShareView: React.FC<DeleteShareViewProps> = ({
   return (
     <form
       onSubmit={(e) => void handleDelete(e)}
-      className="mx-auto max-w-lg rounded-xl border border-slate-200 bg-white p-8 space-y-5"
+      className="mx-auto max-w-lg rounded-xl border border-slate-200 bg-white p-8 space-y-5 dark:border-slate-800 dark:bg-slate-900"
     >
       <div className="flex items-start gap-3">
-        <AlertTriangle className="mt-0.5 h-6 w-6 text-red-700 shrink-0" aria-hidden="true" />
+        <AlertTriangle className="mt-0.5 h-6 w-6 text-red-700 dark:text-red-400 shrink-0" aria-hidden="true" />
         <div className="space-y-1">
-          <h1 className="text-xl font-bold text-slate-900">Delete shared archive</h1>
-          <p className="text-sm text-slate-600">
-            This immediately and permanently deletes all extracted files,{' '}
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">Delete shared archive</h1>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            This immediately and permanently deletes all extracted files, saved edits, original backups,{' '}
             <code className="font-mono text-xs">context.md</code>, and{' '}
             <code className="font-mono text-xs">manifest.json</code> for share{' '}
             <code className="font-mono text-xs">{shareId}</code>.
@@ -83,7 +83,7 @@ export const DeleteShareView: React.FC<DeleteShareViewProps> = ({
       </div>
 
       <div className="space-y-1.5">
-        <label htmlFor="delete-token-input" className="block text-xs font-semibold text-slate-700">
+        <label htmlFor="delete-token-input" className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
           Delete token
         </label>
         <input
@@ -93,12 +93,12 @@ export const DeleteShareView: React.FC<DeleteShareViewProps> = ({
           value={token}
           onChange={(e) => setToken(e.target.value)}
           placeholder="Paste your one-time delete token"
-          className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-700 focus:bg-white focus:outline-none"
+          className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:bg-slate-900"
         />
       </div>
 
       {error && (
-        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900/60 dark:bg-red-950/50 dark:text-red-200">
           {error}
         </div>
       )}
@@ -115,7 +115,7 @@ export const DeleteShareView: React.FC<DeleteShareViewProps> = ({
         <button
           type="button"
           onClick={onNavigateHome}
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
         >
           Cancel
         </button>

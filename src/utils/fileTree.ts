@@ -1,4 +1,4 @@
-import type { ShareFileEntry } from '../shared/types.ts';
+import type { PreviewFileEntry, ShareFileEntry } from '../shared/types.ts';
 
 export interface FileTreeFolderNode {
   kind: 'folder';
@@ -17,6 +17,92 @@ export interface FileTreeFileNode {
 }
 
 export type FileTreeNode = FileTreeFolderNode | FileTreeFileNode;
+
+export interface PreviewTreeFolderNode {
+  kind: 'folder';
+  name: string;
+  path: string;
+  children: PreviewTreeNode[];
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface PreviewTreeFileNode {
+  kind: 'file';
+  name: string;
+  path: string;
+  entry: PreviewFileEntry;
+}
+
+export type PreviewTreeNode = PreviewTreeFolderNode | PreviewTreeFileNode;
+
+export function buildPreviewFileTree(files: PreviewFileEntry[]): PreviewTreeNode[] {
+  const root: PreviewTreeFolderNode = {
+    kind: 'folder',
+    name: '',
+    path: '',
+    children: [],
+    fileCount: 0,
+    totalBytes: 0,
+  };
+
+  const folderMap = new Map<string, PreviewTreeFolderNode>();
+  folderMap.set('', root);
+
+  for (const entry of files) {
+    const parts = entry.relativePath.split('/');
+    let currentPath = '';
+    let parent = root;
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      let folder = folderMap.get(currentPath);
+      if (!folder) {
+        folder = {
+          kind: 'folder',
+          name: part,
+          path: currentPath,
+          children: [],
+          fileCount: 0,
+          totalBytes: 0,
+        };
+        folderMap.set(currentPath, folder);
+        parent.children.push(folder);
+      }
+      folder.fileCount++;
+      folder.totalBytes += entry.sizeBytes;
+      parent = folder;
+    }
+
+    root.fileCount++;
+    root.totalBytes += entry.sizeBytes;
+
+    parent.children.push({
+      kind: 'file',
+      name: parts[parts.length - 1],
+      path: entry.relativePath,
+      entry,
+    });
+  }
+
+  const sortNodes = (nodes: PreviewTreeNode[]) => {
+    nodes.sort((a, b) => {
+      if (a.kind !== b.kind) {
+        return a.kind === 'folder' ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name, 'en');
+    });
+    for (const node of nodes) {
+      if (node.kind === 'folder') {
+        sortNodes(node.children);
+      }
+    }
+  };
+
+  sortNodes(root.children);
+  return root.children;
+}
 
 export function buildFileTree(files: ShareFileEntry[]): FileTreeNode[] {
   const root: FileTreeFolderNode = {
