@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "generatedOutputNote": "Generated automatically by ZipLink from the current saved files in this share.",
+  "shareId": "PgJea_qaYs6zEa2o3ZlxfnzS1PQ4-AEQ",
+  "archiveName": "hybrid-notes.pdf",
+  "createdAt": "2026-11-24T03:32:09.482Z",
+  "expiresAt": "2026-12-01T03:32:09.482Z",
+  "totalFiles": 1,
+  "totalExtractedBytes": 1561,
+  "contextIncludedCount": 0,
+  "contextOmittedCount": 1,
+  "sensitiveFilenameWarnings": [],
+  "files": [
+    {
+      "id": "d0c6ec03-cbdf-4778-8743-66306aa40f58",
+      "relativePath": "hybrid-notes.pdf",
+      "sizeBytes": 1561,
+      "sha256": "d4d3b52068c022030f86b637f6401e00d7d8db51a3427464fdb8cb3fdf5da81f",
+      "originalSizeBytes": 1561,
+      "originalSha256": "d4d3b52068c022030f86b637f6401e00d7d8db51a3427464fdb8cb3fdf5da81f",
+      "version": 1,
+      "isEdited": false,
+      "lastModifiedAt": null,
+      "isText": false,
+      "isActiveContent": false,
+      "includedInContextMd": false,
+      "omissionReason": "PDF document (open in ZipLink PDF Reader)"
+    }
+  ]
+}

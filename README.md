@@ -1,8 +1,8 @@
 # ZipLink
 
-ZipLink turns an uploaded `.zip` archive into an unlisted, expiring web share page containing a browsable file tree, syntax-highlighted code viewer, owner-authorized code editor with diff & restore, individual and full edited ZIP downloads, a machine-readable `manifest.json`, and a deterministic `context.md` file built from readable UTF-8 text files.
+ZipLink turns an uploaded `.zip` archive or single `.pdf` document into an unlisted, expiring web share page containing a browsable file tree, syntax-highlighted code viewer, owner-authorized code editor with diff & restore, a browser-side PDF reader with page-to-image export and optional local OCR, individual and full edited ZIP downloads, a machine-readable `manifest.json`, and a deterministic `context.md` file built from readable UTF-8 text files.
 
-> **Honest AI compatibility note:** Sharing a ZipLink URL does **not** guarantee an AI model can open it. URL-based prompts only work in AI tools that support fetching external web pages. ZipLink provides one-click Copy and Download buttons for `context.md` so you can always use your AI provider's approved file-upload or paste input method.
+> **Honest AI compatibility note:** Sharing a ZipLink URL or copying/exporting extracted text does **not** guarantee an AI model can accept or process it. Users must follow their AI provider's rules and approved input methods. Image conversion is suitable only when the destination service permits submitting the document's content as images; do not use conversion to bypass restrictions on processing the content itself.
 
 ---
 
@@ -25,10 +25,19 @@ ZipLink turns an uploaded `.zip` archive into an unlisted, expiring web share pa
 - **Deterministic `context.md` & `manifest.json`:** Combines readable UTF-8 text files under relative path headings within a configurable byte budget, escapes markdown code fences, excludes binaries and nested archives, and lists every omitted file with its reason.
 - **Pre-Publish Sensitive Filename Warning:** Inspects ZIP central-directory filenames in the browser before upload and warns about likely sensitive files (`.env`, private keys, credentials). *(Filename check only — not a complete secrets scan.)*
 - **Unlisted, Expiring Shares & One-Time Delete:** Generates 192-bit random `shareId` URLs with `X-Robots-Tag: noindex, nofollow, noarchive`, selectable `24h`, `7d` (default), or `30d` expiration, a 256-bit delete token, and scheduled background cleanup that permanently deletes all blobs, edits, and original backups.
+- **Browser-Side PDF Reader (`pdfjs-dist`), Page Image Export & Optional Local OCR:**
+  - Open PDF files contained inside an uploaded `.zip` archive via **Open PDF** in the file tree, or upload a single `.pdf` file directly (validated via `%PDF-` signature and existing size/expiry/deletion rules).
+  - Read-only viewing with PDF.js bundled locally (`isEvalSupported: false`, `enableScripting: false` — never rendered in an `<iframe>`, never executes PDF JavaScript or launch actions, and leaves the original PDF unchanged).
+  - Page navigation (Prev/Next, page jump, keyboard navigation), Zoom in/out, **Fit width**, **Fit page**, **Fullscreen**, selectable text layer kept readable on a white page surface in both Light and Dark themes, text search with match highlighting, and **Copy selected** / **Copy page text**.
+  - **Extracted text view:** Select all pages, current page, or a custom page range (e.g. `1-3, 5`) and copy or download `.txt` / `.md` with `## Page N` headers preserved.
+  - **Page-by-page support for text-based, scan-only, and hybrid PDFs:** Each page is checked individually; pages with little or no selectable text are labeled **Scanned/image page** while keeping page viewing and image export available.
+  - **Export PDF pages as images:** Render one page, a range, or all pages sequentially in the browser as individual ordered files (`document-page-0001.png`, `document-page-0002.jpg`, etc.) in **PNG** or **JPEG** at **Standard** (1.5x) or **High** (2.5x) resolution with estimated sizes, live progress, **Cancel**, immediate canvas release after each page, individual downloads, and optional ZIP download.
+  - **Optional local browser OCR (`tesseract.js`):** Runs strictly inside your browser one page at a time only after you explicitly confirm downloading the bundled **English (`eng`)** language data (~3 MB from this ZipLink server's `/ocr-assets/` route; no other OCR languages are configured, and zero data is sent to third-party CDNs, AI models, or external OCR services). OCR output is displayed separately with accuracy warnings for handwriting, low-quality scans, and unusual layouts.
+  - **Password-protected PDFs:** Prompts inline when encrypted; passwords are never logged, stored, or sent to the server.
 - **ZIP & Web Security Defenses:**
   - Enforces configurable limits (`50 MB` compressed upload, `200 MB` extracted total, `500` entries, `512 KB` `context.md` budget, `512 KB` inline preview/edit per-file limit).
   - Enforces extracted size mid-stream to stop ZIP bombs even when central-directory headers lie.
-  - Rejects malformed ZIPs, encrypted ZIPs, Unix/Windows symlinks, absolute paths, path traversal (`../`), null bytes, and duplicate entries.
+  - Rejects malformed ZIPs, fake `.pdf` uploads missing `%PDF-`, encrypted ZIPs, Unix/Windows symlinks, absolute paths, path traversal (`../`), null bytes, and duplicate entries.
   - Does not recursively extract nested `.zip` archives.
   - Renders all uploaded files (including HTML, JS, and SVG) strictly as escaped, syntax-highlighted source text — never executed or rendered as live HTML. Serves downloads with `Content-Type: application/octet-stream` (or `application/zip` for full archive downloads), `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: default-src 'none'; sandbox`.
 
@@ -133,4 +142,6 @@ For multi-instance production deployment on **Google Cloud Run** with **private 
 - **Ephemeral local disk on stateless hosts:** If deployed to Cloud Run or another ephemeral filesystem without `STORAGE_DRIVER=gcs` (`GCS_BUCKET` + `GOOGLE_CLOUD_PROJECT`), local `./data` storage resets on container restart.
 - **No malware/antivirus scanning:** Archives are structurally validated and safely sandboxed for download, not scanned for malware.
 - **Filename-only sensitive warning:** Pre-publish warnings check common filenames (`.env`, `*.pem`, `*.key`, `credentials.json`, etc.) and do not scan file contents for secrets or API keys.
+- **PDF language & OCR scope:** Built-in optional browser OCR only configures **English (`eng`)** (`@tesseract.js-data/eng`). OCR accuracy drops on handwriting, skewed or low-DPI scans, or complex multi-column tables; always review recognized text before relying on it.
+- **PDF canvas/export limits:** To avoid browser memory exhaustion, per-page image export enforces a `8192 px` maximum side length, `24 MP` pixel area cap, and `100`-page batch export cap (pages exceeding these bounds display a clear error).
 - **In-memory rate limiting:** Default `express-rate-limit` store is per-instance; for multi-instance Cloud Run scaling, configure Cloud Armor or a shared Redis store.

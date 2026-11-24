@@ -27,12 +27,14 @@ import type {
   ShareFileEntry,
 } from '../shared/types.ts';
 import { formatBytes } from '../shared/zipSecurity.ts';
+import { isPdfFilename } from '../shared/pdfUtils.ts';
 import { detectLanguageFromPath } from '../shared/language.ts';
 import { formatUtcDate } from '../utils/fileTree.ts';
 import { FileTree } from './FileTree.tsx';
 import { CodeEditor, type CodeEditorHandle } from './CodeEditor.tsx';
 import { DiffViewer } from './DiffViewer.tsx';
 import { ModalDialog } from './ConfirmModal.tsx';
+import { PdfReader } from './PdfReader.tsx';
 
 interface ShareViewProps {
   shareId: string;
@@ -269,6 +271,9 @@ export const ShareView: React.FC<ShareViewProps> = ({
         const data = (await res.json()) as PublicShareMetadata;
         if (!cancelled) {
           setShare(data);
+          if (data.files.length === 1 && isPdfFilename(data.files[0].relativePath)) {
+            setSelectedView({ kind: 'file', fileId: data.files[0].id });
+          }
         }
 
         const ctxRes = await fetch(`/api/shares/${encodeURIComponent(shareId)}/context.md`);
@@ -685,11 +690,14 @@ export const ShareView: React.FC<ShareViewProps> = ({
 
   const publicShareUrl = `${window.location.origin}/s/${encodeURIComponent(share.shareId)}`;
   const activeLanguage = activeFile ? detectLanguageFromPath(activeFile.relativePath) : null;
+  const activeIsPdf = activeFile ? isPdfFilename(activeFile.relativePath) : false;
   const isOverPreviewLimit = activeFile ? activeFile.sizeBytes > maxTextPreviewBytes : false;
   const canEditActiveFile = Boolean(
     canEdit && activeFile && activeFile.isText && !isOverPreviewLimit && !fileState.error,
   );
   const editedCount = share.files.filter((f) => f.isEdited).length;
+  const isSinglePdfShare =
+    share.files.length === 1 && isPdfFilename(share.files[0].relativePath);
 
   return (
     <div className="space-y-6">
@@ -700,11 +708,17 @@ export const ShareView: React.FC<ShareViewProps> = ({
               {share.archiveName}
             </h1>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-mono tabular-nums text-slate-600 dark:text-slate-400">
-              <span>{share.totalFiles} files</span>
+              <span>
+                {share.totalFiles} {share.totalFiles === 1 ? 'file' : 'files'}
+              </span>
               <span aria-hidden="true">·</span>
               <span>{formatBytes(share.totalExtractedBytes)}</span>
-              <span aria-hidden="true">·</span>
-              <span>{share.contextIncludedCount} in context.md</span>
+              {!isSinglePdfShare && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>{share.contextIncludedCount} in context.md</span>
+                </>
+              )}
               {editedCount > 0 && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -733,7 +747,7 @@ export const ShareView: React.FC<ShareViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {!canEdit && (
+            {!canEdit && !isSinglePdfShare && (
               <button
                 type="button"
                 onClick={() => {
@@ -796,7 +810,9 @@ export const ShareView: React.FC<ShareViewProps> = ({
           </strong>{' '}
           {canEdit
             ? 'You hold a valid owner edit token. Saved edits persist to server storage, keep original uploads intact for diff/restore until expiry, and automatically update context.md and manifest.json.'
-            : 'Public share URLs are strictly read-only. Anyone with this URL can inspect highlighted source code and download files until '}
+            : isSinglePdfShare
+              ? 'Public share URLs are strictly read-only. Anyone with this URL can read this PDF locally in the browser and download it until '
+              : 'Public share URLs are strictly read-only. Anyone with this URL can inspect files, read PDFs locally, and download files until '}
           {!canEdit && <span className="font-mono">{formatUtcDate(share.expiresAt)}.</span>}
         </div>
 
@@ -1006,7 +1022,7 @@ export const ShareView: React.FC<ShareViewProps> = ({
                       )}
                     </div>
                     <div className="flex flex-wrap items-center gap-x-2 text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
-                      <span>{activeLanguage?.label ?? 'Plain Text'}</span>
+                      <span>{activeIsPdf ? 'PDF document' : activeLanguage?.label ?? 'Plain Text'}</span>
                       <span aria-hidden="true">·</span>
                       <span>{formatBytes(activeFile.sizeBytes)}</span>
                       <span aria-hidden="true">·</span>
@@ -1022,7 +1038,7 @@ export const ShareView: React.FC<ShareViewProps> = ({
                       {!activeFile.isText && (
                         <>
                           <span aria-hidden="true">·</span>
-                          <span>Binary / read-only</span>
+                          <span>{activeIsPdf ? 'Read-only PDF' : 'Binary / read-only'}</span>
                         </>
                       )}
                     </div>
@@ -1214,8 +1230,8 @@ export const ShareView: React.FC<ShareViewProps> = ({
                 )}
               </div>
 
-              {/* Active content safety notice */}
-              {activeFile.isActiveContent && (
+              {/* Active content safety notice (for non-PDF active web files) */}
+              {activeFile.isActiveContent && !activeIsPdf && (
                 <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-5 py-2.5 text-xs text-slate-600 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-300">
                   <ShieldCheck className="h-4 w-4 text-blue-700 dark:text-blue-400 shrink-0" aria-hidden="true" />
                   <span>
@@ -1309,8 +1325,14 @@ export const ShareView: React.FC<ShareViewProps> = ({
                 </div>
               )}
 
-              {/* Main body: Binary / Oversized / Loading / Error / Diff / CodeEditor */}
-              {!activeFile.isText ? (
+              {/* Main body: PDF Reader / Binary / Oversized / Loading / Error / Diff / CodeEditor */}
+              {!activeFile.isText && activeIsPdf ? (
+                <PdfReader
+                  shareId={share.shareId}
+                  file={activeFile}
+                  effectiveTheme={effectiveTheme}
+                />
+              ) : !activeFile.isText ? (
                 <div className="p-8 text-center space-y-3">
                   <p className="text-sm text-slate-700 dark:text-slate-300">
                     This file is binary or non-UTF-8 ({activeFile.omissionReason || 'binary file'})

@@ -1,0 +1,32 @@
+{
+  "shareId": "ktJMkp5jxY1EMM23AO_dftlOcUGn6rYQ",
+  "archiveName": "hybrid-notes.pdf",
+  "createdAt": "2026-11-24T03:31:23.618Z",
+  "expiresAt": "2026-12-01T03:31:23.618Z",
+  "expiresAtMs": 1796095883618,
+  "expiryOption": "7d",
+  "totalFiles": 1,
+  "totalExtractedBytes": 1561,
+  "contextIncludedCount": 0,
+  "contextOmittedCount": 1,
+  "sensitiveWarnings": [],
+  "files": [
+    {
+      "id": "d296ddf4-e223-41ae-85f1-467a296d5643",
+      "relativePath": "hybrid-notes.pdf",
+      "sizeBytes": 1561,
+      "sha256": "d4d3b52068c022030f86b637f6401e00d7d8db51a3427464fdb8cb3fdf5da81f",
+      "originalSizeBytes": 1561,
+      "originalSha256": "d4d3b52068c022030f86b637f6401e00d7d8db51a3427464fdb8cb3fdf5da81f",
+      "version": 1,
+      "isEdited": false,
+      "lastModifiedAt": null,
+      "isText": false,
+      "isActiveContent": false,
+      "includedInContextMd": false,
+      "omissionReason": "PDF document (open in ZipLink PDF Reader)"
+    }
+  ],
+  "deleteTokenHash": "b77d023e14a86d9228f059de38f4cb418c7441870c2918a4b37ae138f994467d",
+  "editTokenHash": "23e12306aa8323e791895e0ff06a9966d643ba5069d246ade3c90624476cd97b"
+}

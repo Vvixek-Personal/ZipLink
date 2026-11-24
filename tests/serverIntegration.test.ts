@@ -594,3 +594,81 @@ test('Deletion requires valid token and immediately stops share links from worki
     await srv.close();
   }
 });
+
+test('Single PDF upload creates read-only share, rejects fake PDFs, serves bundled /ocr-assets, and enforces safe attachment headers', async () => {
+  const srv = await startTestServer();
+  try {
+    // 1. Fake .pdf missing %PDF- header is rejected cleanly
+    const fakeForm = new FormData();
+    fakeForm.append(
+      'archive',
+      new Blob([Buffer.from('<html><script>alert(1)</script></html>')], { type: 'application/pdf' }),
+      'evil.pdf',
+    );
+    const fakeRes = await fetch(`${srv.baseUrl}/api/shares`, { method: 'POST', body: fakeForm });
+    assert.equal(fakeRes.status, 400);
+    const fakeErr = (await fakeRes.json()) as { error: string };
+    assert.match(fakeErr.error, /%PDF-/);
+
+    // 2. Valid single PDF upload -> 201
+    const samplePdfBytes = Buffer.from(
+      '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n',
+      'latin1',
+    );
+    const pdfForm = new FormData();
+    pdfForm.append('archive', new Blob([samplePdfBytes], { type: 'application/pdf' }), 'manual.pdf');
+    pdfForm.append('expiry', '24h');
+    const upRes = await fetch(`${srv.baseUrl}/api/shares`, { method: 'POST', body: pdfForm });
+    assert.equal(upRes.status, 201);
+    const created = (await upRes.json()) as {
+      shareId: string;
+      editToken: string;
+      deleteToken: string;
+      totalFiles: number;
+      archiveName: string;
+    };
+    assert.equal(created.totalFiles, 1);
+    assert.equal(created.archiveName, 'manual.pdf');
+
+    const meta = (await (
+      await fetch(`${srv.baseUrl}/api/shares/${created.shareId}`)
+    ).json()) as {
+      files: Array<{ id: string; relativePath: string; isText: boolean; omissionReason: string | null }>;
+    };
+    assert.equal(meta.files.length, 1);
+    assert.equal(meta.files[0].relativePath, 'manual.pdf');
+    assert.equal(meta.files[0].isText, false);
+    assert.match(meta.files[0].omissionReason || '', /PDF document/i);
+
+    // 3. Raw PDF endpoint stays locked down (attachment + nosniff + sandbox CSP, never inline active execution)
+    const rawRes = await fetch(`${srv.baseUrl}/api/shares/${created.shareId}/files/${meta.files[0].id}`);
+    assert.equal(rawRes.status, 200);
+    assert.equal(rawRes.headers.get('content-type'), 'application/octet-stream');
+    assert.match(rawRes.headers.get('content-disposition') || '', /^attachment;/);
+    assert.match(rawRes.headers.get('content-security-policy') || '', /sandbox/);
+    assert.equal(rawRes.headers.get('x-content-type-options'), 'nosniff');
+
+    // 4. PDF cannot be edited even with owner edit token (415 read-only)
+    const editRes = await fetch(
+      `${srv.baseUrl}/api/shares/${created.shareId}/files/${meta.files[0].id}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${created.editToken}`,
+        },
+        body: JSON.stringify({ content: 'overwrite pdf' }),
+      },
+    );
+    assert.equal(editRes.status, 415);
+
+    // 5. Local OCR runtime & English language data are served from same-origin /ocr-assets
+    const workerRes = await fetch(`${srv.baseUrl}/ocr-assets/worker.min.js`);
+    assert.equal(workerRes.status, 200);
+    const engRes = await fetch(`${srv.baseUrl}/ocr-assets/tessdata/eng.traineddata.gz`);
+    assert.equal(engRes.status, 200);
+  } finally {
+    await srv.close();
+  }
+});
+

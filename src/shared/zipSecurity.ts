@@ -1,6 +1,5 @@
 import type {
   ExpiryOption,
-  PreviewEntryPointCandidate,
   SensitiveFileWarning,
 } from './types.ts';
 
@@ -243,6 +242,12 @@ export function classifyTextContent(
   }
 
   const ext = getLowerExtension(relativePath);
+  if (ext === '.pdf') {
+    return {
+      isText: false,
+      reason: 'PDF document (open in ZipLink PDF Reader)',
+    };
+  }
   const baseName = (relativePath.split('/').pop() ?? '').toLowerCase();
   if (KNOWN_BINARY_EXTENSIONS.has(ext) || baseName === '.ds_store') {
     return {
@@ -423,223 +428,5 @@ export function formatBytes(bytes: number): string {
     idx++;
   }
   return `${val.toFixed(val >= 100 ? 0 : 1)} ${units[idx]}`;
-}
-
-const PREVIEW_STATIC_MIME_TYPES: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.htm': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.mjs': 'application/javascript; charset=utf-8',
-  '.cjs': 'application/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.map': 'application/json; charset=utf-8',
-  '.webmanifest': 'application/manifest+json; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8',
-  '.md': 'text/markdown; charset=utf-8',
-  '.csv': 'text/csv; charset=utf-8',
-  '.xml': 'application/xml; charset=utf-8',
-  '.svg': 'image/svg+xml; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.avif': 'image/avif',
-  '.ico': 'image/x-icon',
-  '.bmp': 'image/bmp',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-  '.eot': 'application/vnd.ms-fontobject',
-  '.mp3': 'audio/mpeg',
-  '.wav': 'audio/wav',
-  '.ogg': 'audio/ogg',
-  '.mp4': 'video/mp4',
-  '.webm': 'video/webm',
-  '.wasm': 'application/wasm',
-};
-
-const UNSAFE_PREVIEW_EXTENSIONS = new Set([
-  '.exe',
-  '.dll',
-  '.so',
-  '.dylib',
-  '.msi',
-  '.bat',
-  '.cmd',
-  '.ps1',
-  '.sh',
-  '.bash',
-  '.zsh',
-  '.dmg',
-  '.pkg',
-  '.deb',
-  '.rpm',
-  '.apk',
-  '.app',
-  '.jar',
-  '.war',
-  '.class',
-  '.php',
-  '.phtml',
-  '.asp',
-  '.aspx',
-  '.jsp',
-  '.cgi',
-  '.pl',
-  '.py',
-  '.rb',
-  '.vbs',
-  '.scr',
-  '.com',
-]);
-
-export function classifyPreviewAsset(relativePath: string): {
-  mimeType: string;
-  isHtml: boolean;
-  blockedInPreview: boolean;
-  blockReason: string | null;
-} {
-  const ext = getLowerExtension(relativePath);
-  if (UNSAFE_PREVIEW_EXTENSIONS.has(ext)) {
-    return {
-      mimeType: 'application/octet-stream',
-      isHtml: false,
-      blockedInPreview: true,
-      blockReason: `Executable or server-script file type (${ext}) is blocked from static preview serving.`,
-    };
-  }
-
-  const mimeType = PREVIEW_STATIC_MIME_TYPES[ext];
-  if (!mimeType) {
-    return {
-      mimeType: 'application/octet-stream',
-      isHtml: false,
-      blockedInPreview: true,
-      blockReason: `Unsupported file type (${ext || 'no extension'}) is not served as a static web asset.`,
-    };
-  }
-
-  return {
-    mimeType,
-    isHtml: ext === '.html' || ext === '.htm',
-    blockedInPreview: false,
-    blockReason: null,
-  };
-}
-
-const COMMON_OUTPUT_DIRS = new Set(['dist', 'build', 'public', 'out', 'site', 'docs']);
-
-export function detectHtmlEntryPoints(paths: string[]): PreviewEntryPointCandidate[] {
-  const candidates: PreviewEntryPointCandidate[] = [];
-  const normalizedPaths = paths.filter((p) => !p.endsWith('/') && !p.startsWith('__MACOSX/'));
-
-  const topLevelDirs = new Set(
-    normalizedPaths.map((p) => (p.includes('/') ? p.split('/')[0] : '')).filter(Boolean),
-  );
-  const hasSingleRootWrapper = topLevelDirs.size === 1;
-
-  for (const relPath of normalizedPaths) {
-    const ext = getLowerExtension(relPath);
-    if (ext !== '.html' && ext !== '.htm') continue;
-
-    const segments = relPath.split('/');
-    const fileName = segments[segments.length - 1].toLowerCase();
-    const dirSegments = segments.slice(0, -1);
-    const siteRoot = dirSegments.join('/');
-
-    let priority = 50 + segments.length;
-    let label = relPath;
-
-    if (relPath.toLowerCase() === 'index.html' || relPath.toLowerCase() === 'index.htm') {
-      priority = 1;
-      label = `${relPath} (Archive root)`;
-    } else if (
-      hasSingleRootWrapper &&
-      dirSegments.length === 1 &&
-      (fileName === 'index.html' || fileName === 'index.htm')
-    ) {
-      priority = 2;
-      label = `${relPath} (Project root folder)`;
-    } else if (
-      dirSegments.length === 1 &&
-      COMMON_OUTPUT_DIRS.has(dirSegments[0].toLowerCase()) &&
-      (fileName === 'index.html' || fileName === 'index.htm')
-    ) {
-      priority = 3;
-      label = `${relPath} (${dirSegments[0]}/ output)`;
-    } else if (
-      hasSingleRootWrapper &&
-      dirSegments.length === 2 &&
-      COMMON_OUTPUT_DIRS.has(dirSegments[1].toLowerCase()) &&
-      (fileName === 'index.html' || fileName === 'index.htm')
-    ) {
-      priority = 4;
-      label = `${relPath} (${dirSegments.join('/')}/ output)`;
-    } else if (fileName === 'index.html' || fileName === 'index.htm') {
-      priority = 10 + dirSegments.length;
-      label = `${relPath} (Nested index)`;
-    }
-
-    candidates.push({
-      relativePath: relPath,
-      siteRoot,
-      label,
-      priority,
-    });
-  }
-
-  candidates.sort((a, b) => {
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return a.relativePath.localeCompare(b.relativePath, 'en');
-  });
-
-  return candidates;
-}
-
-/**
- * Rewrites root-relative asset/page references (e.g. "/assets/app.js") only when
- * that target exists inside the preview's siteRoot, and injects a tiny passive
- * navigation reporter so the parent preview bar stays synced on in-iframe clicks.
- */
-export function prepareHtmlForSandboxedPreview(params: {
-  html: string;
-  siteRoot: string;
-  siteBasePath: string;
-  knownPaths: Set<string>;
-}): string {
-  const { html, siteRoot, siteBasePath, knownPaths } = params;
-  const cleanBase = siteBasePath.replace(/\/+$/, '');
-  const rootPrefix = siteRoot ? `${siteRoot}/` : '';
-
-  const rewritten = html.replace(
-    /(\b(?:src|href|action|poster)\s*=\s*)(["'])\/(?!\/)([^"']*)\2/gi,
-    (fullMatch, attrPrefix: string, quote: string, subPath: string) => {
-      const cleanSub = subPath.split(/[?#]/)[0];
-      const suffix = subPath.slice(cleanSub.length);
-      const candidateInSiteRoot = `${rootPrefix}${cleanSub}`;
-      const candidateAtArchiveRoot = cleanSub;
-
-      if (knownPaths.has(candidateInSiteRoot)) {
-        return `${attrPrefix}${quote}${cleanBase}/${candidateInSiteRoot}${suffix}${quote}`;
-      }
-      if (knownPaths.has(candidateAtArchiveRoot)) {
-        return `${attrPrefix}${quote}${cleanBase}/${candidateAtArchiveRoot}${suffix}${quote}`;
-      }
-      return fullMatch;
-    },
-  );
-
-  const navReporterScript = `<script>(function(){function n(){try{window.parent.postMessage({type:"ziplink-preview-nav",pathname:window.location.pathname,hash:window.location.hash},"*")}catch(e){}}window.addEventListener("load",n);window.addEventListener("hashchange",n);window.addEventListener("popstate",n);n();})();</script>`;
-
-  if (/<head(\s[^>]*)?>/i.test(rewritten)) {
-    return rewritten.replace(/<head(\s[^>]*)?>/i, (m) => `${m}${navReporterScript}`);
-  }
-  if (/<body(\s[^>]*)?>/i.test(rewritten)) {
-    return rewritten.replace(/<body(\s[^>]*)?>/i, (m) => `${navReporterScript}${m}`);
-  }
-  return `${navReporterScript}${rewritten}`;
 }
 

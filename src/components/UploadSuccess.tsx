@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { UploadSuccessPayload } from '../shared/types.ts';
 import { formatBytes } from '../shared/zipSecurity.ts';
+import { isPdfFilename } from '../shared/pdfUtils.ts';
 import { buildSuggestedPrompt, formatUtcDate } from '../utils/fileTree.ts';
 
 interface UploadSuccessProps {
@@ -141,7 +142,9 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
               {result.archiveName}
             </h1>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 dark:text-slate-400 font-mono tabular-nums">
-              <span>{result.totalFiles} files</span>
+              <span>
+                {result.totalFiles} {result.totalFiles === 1 ? 'file' : 'files'}
+              </span>
               <span aria-hidden="true">·</span>
               <span>{formatBytes(result.totalExtractedBytes)} extracted</span>
               <span aria-hidden="true">·</span>
@@ -158,22 +161,35 @@ export const UploadSuccess: React.FC<UploadSuccessProps> = ({
           </div>
 
           <div className="flex flex-wrap shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onOpenShare(result.shareId, result.editToken)}
-              className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
-            >
-              <Pencil className="h-4 w-4" aria-hidden="true" />
-              <span>Open owner editor</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenShare(result.shareId)}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
-            >
-              <span>Open read-only share</span>
-              <ExternalLink className="h-4 w-4" aria-hidden="true" />
-            </button>
+            {result.totalFiles === 1 && isPdfFilename(result.archiveName) ? (
+              <button
+                type="button"
+                onClick={() => onOpenShare(result.shareId)}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                <span>Open PDF reader</span>
+                <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onOpenShare(result.shareId, result.editToken)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-blue-800 dark:bg-blue-600 dark:hover:bg-blue-500 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
+                >
+                  <Pencil className="h-4 w-4" aria-hidden="true" />
+                  <span>Open owner editor</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenShare(result.shareId)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
+                >
+                  <span>Open read-only share</span>
+                  <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </>
+            )}
           </div>
         </div>
 

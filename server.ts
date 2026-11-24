@@ -5,24 +5,16 @@ import express from 'express';
 import { createZipLinkApp } from './src/server/app.ts';
 
 async function startServer() {
-  const { app, config, storage, previewStore } = await createZipLinkApp();
+  const { app, config, storage } = await createZipLinkApp();
 
-  // Initial expired share + temporary preview sweep + scheduled background cleanup
-  await Promise.all([
-    storage.purgeExpiredShares().catch((err) => {
-      console.error('[ZipLink] Initial share cleanup error:', err instanceof Error ? err.message : err);
-    }),
-    previewStore.purgeExpiredPreviews().catch((err) => {
-      console.error('[ZipLink] Initial preview cleanup error:', err instanceof Error ? err.message : err);
-    }),
-  ]);
+  // Initial expired share sweep + scheduled background cleanup
+  await storage.purgeExpiredShares().catch((err) => {
+    console.error('[ZipLink] Initial share cleanup error:', err instanceof Error ? err.message : err);
+  });
 
   const cleanupTimer = setInterval(() => {
     storage.purgeExpiredShares().catch((err) => {
       console.error('[ZipLink] Scheduled share cleanup error:', err instanceof Error ? err.message : err);
-    });
-    previewStore.purgeExpiredPreviews().catch((err) => {
-      console.error('[ZipLink] Scheduled preview cleanup error:', err instanceof Error ? err.message : err);
     });
   }, config.cleanupIntervalMs);
   cleanupTimer.unref();

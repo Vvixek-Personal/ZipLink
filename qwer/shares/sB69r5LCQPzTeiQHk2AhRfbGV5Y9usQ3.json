@@ -1,0 +1,37 @@
+{
+  "shareId": "sB69r5LCQPzTeiQHk2AhRfbGV5Y9usQ3",
+  "archiveName": "secret-locked.pdf",
+  "createdAt": "2026-11-24T03:32:58.925Z",
+  "expiresAt": "2026-12-01T03:32:58.925Z",
+  "expiresAtMs": 1796095978925,
+  "expiryOption": "7d",
+  "totalFiles": 1,
+  "totalExtractedBytes": 956,
+  "contextIncludedCount": 0,
+  "contextOmittedCount": 1,
+  "sensitiveWarnings": [
+    {
+      "relativePath": "secret-locked.pdf",
+      "reason": "Filename suggests credentials or secret material."
+    }
+  ],
+  "files": [
+    {
+      "id": "4a1704bb-7929-4101-aaf0-bd14b2550962",
+      "relativePath": "secret-locked.pdf",
+      "sizeBytes": 956,
+      "sha256": "5f8770acc6b05db2e2b632b88723fef35f970735d4bc8a19625d3be7663b97b6",
+      "originalSizeBytes": 956,
+      "originalSha256": "5f8770acc6b05db2e2b632b88723fef35f970735d4bc8a19625d3be7663b97b6",
+      "version": 1,
+      "isEdited": false,
+      "lastModifiedAt": null,
+      "isText": false,
+      "isActiveContent": false,
+      "includedInContextMd": false,
+      "omissionReason": "PDF document (open in ZipLink PDF Reader)"
+    }
+  ],
+  "deleteTokenHash": "21f76f19fe3a91eb0fc88912c9c6f15c5ab2c52630da017773649b8cbc556039",
+  "editTokenHash": "c014d12ea0a47182670bd129e62aab321e5f78996de8c392fe380b6d482141bb"
+}

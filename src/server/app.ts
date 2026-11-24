@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,7 +23,9 @@ import {
   sanitizeArchiveFilename,
   sanitizeContentDispositionFilename,
   formatBytes,
+  validateArchiveEntryPath,
 } from '../shared/zipSecurity.ts';
+import { hasPdfMagicHeader, isPdfFilename } from '../shared/pdfUtils.ts';
 import type {
   ExpiryOption,
   FileConflictPayload,
@@ -132,6 +135,50 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
     res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
     res.setHeader('Cache-Control', 'no-store');
     next();
+  });
+
+  // Serve bundled browser OCR runtime & English language data strictly from local node_modules
+  // so optional OCR never contacts external CDNs or third-party services.
+  const tesseractWorkerPath = path.resolve(
+    process.cwd(),
+    'node_modules/tesseract.js/dist/worker.min.js',
+  );
+  const tesseractCoreDir = path.resolve(process.cwd(), 'node_modules/tesseract.js-core');
+  const tesseractEngDataPath = path.resolve(
+    process.cwd(),
+    'node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz',
+  );
+
+  app.get('/ocr-assets/worker.min.js', (_req, res) => {
+    if (!fs.existsSync(tesseractWorkerPath)) {
+      res.status(404).type('text/plain').send('OCR worker not available.');
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.type('application/javascript; charset=utf-8').sendFile(tesseractWorkerPath);
+  });
+
+  app.use(
+    '/ocr-assets/core',
+    express.static(tesseractCoreDir, {
+      index: false,
+      maxAge: '1h',
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.wasm')) {
+          res.setHeader('Content-Type', 'application/wasm');
+        }
+      },
+    }),
+  );
+
+  app.get('/ocr-assets/tessdata/eng.traineddata.gz', (_req, res) => {
+    if (!fs.existsSync(tesseractEngDataPath)) {
+      res.status(404).type('text/plain').send('English OCR traineddata not available.');
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Content-Type', 'application/gzip');
+    res.sendFile(tesseractEngDataPath);
   });
 
   // Size JSON body limit to comfortably accept text edits up to maxTextPreviewBytes
@@ -340,7 +387,7 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
     async (req, res, next) => {
       const uploadedFile = req.file;
       if (!uploadedFile) {
-        res.status(400).json({ error: 'Please select a .zip archive file to upload.' });
+        res.status(400).json({ error: 'Please select a .zip archive or .pdf document to upload.' });
         return;
       }
 
@@ -350,15 +397,84 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
       const extractTempDir = path.join(os.tmpdir(), `ziplink-extract-${crypto.randomUUID()}`);
 
       try {
-        const extracted = await safelyExtractZipToTempDir({
-          zipFilePath: uploadedFile.path,
-          extractTempDir,
-          limits: {
-            maxExtractedBytes: config.maxExtractedBytes,
-            maxEntryCount: config.maxEntryCount,
-            maxTextPreviewBytes: config.maxTextPreviewBytes,
-          },
-        });
+        const archiveName = sanitizeArchiveFilename(uploadedFile.originalname || 'archive.zip');
+        let extractedFiles: TextFileContentInput[];
+        let extractedBlobPaths: Map<string, string>;
+        let totalExtractedBytes: number;
+
+        const looksLikePdfByName = isPdfFilename(uploadedFile.originalname || '');
+        const headHandle = await fsp.open(uploadedFile.path, 'r');
+        const headBuf = Buffer.alloc(1024);
+        const { bytesRead } = await headHandle.read(headBuf, 0, 1024, 0);
+        await headHandle.close();
+        const headerSlice = headBuf.subarray(0, bytesRead);
+        const hasPdfHeader = hasPdfMagicHeader(headerSlice);
+
+        if (looksLikePdfByName || hasPdfHeader) {
+          if (!hasPdfHeader) {
+            res.status(400).json({
+              error: 'The uploaded .pdf file is missing a valid %PDF- header and was rejected.',
+            });
+            return;
+          }
+          if (uploadedFile.size === 0) {
+            res.status(400).json({ error: 'The uploaded PDF file is empty.' });
+            return;
+          }
+          if (uploadedFile.size > config.maxExtractedBytes) {
+            res.status(413).json({
+              error: `PDF exceeds the ${formatBytes(config.maxExtractedBytes)} storage limit.`,
+            });
+            return;
+          }
+
+          const pdfNameCandidate = isPdfFilename(archiveName) ? archiveName : `${archiveName}.pdf`;
+          const pathCheck = validateArchiveEntryPath(pdfNameCandidate);
+          const safeEntryName =
+            pathCheck.valid && pathCheck.normalizedPath ? pathCheck.normalizedPath : 'document.pdf';
+
+          const sha256 = await new Promise<string>((resolve, reject) => {
+            const hash = crypto.createHash('sha256');
+            const rs = fs.createReadStream(uploadedFile.path);
+            rs.on('data', (chunk) => hash.update(chunk));
+            rs.on('error', reject);
+            rs.on('end', () => resolve(hash.digest('hex')));
+          });
+
+          const fileId = crypto.randomUUID();
+          const pdfEntry: ShareFileEntry = {
+            id: fileId,
+            relativePath: safeEntryName,
+            sizeBytes: uploadedFile.size,
+            sha256,
+            originalSizeBytes: uploadedFile.size,
+            originalSha256: sha256,
+            version: 1,
+            isEdited: false,
+            lastModifiedAt: null,
+            isText: false,
+            isActiveContent: false,
+            includedInContextMd: false,
+            omissionReason: 'PDF document (open in ZipLink PDF Reader)',
+          };
+
+          extractedFiles = [{ file: pdfEntry, textContent: null }];
+          extractedBlobPaths = new Map([[fileId, uploadedFile.path]]);
+          totalExtractedBytes = uploadedFile.size;
+        } else {
+          const extracted = await safelyExtractZipToTempDir({
+            zipFilePath: uploadedFile.path,
+            extractTempDir,
+            limits: {
+              maxExtractedBytes: config.maxExtractedBytes,
+              maxEntryCount: config.maxEntryCount,
+              maxTextPreviewBytes: config.maxTextPreviewBytes,
+            },
+          });
+          extractedFiles = extracted.files;
+          extractedBlobPaths = extracted.extractedBlobPaths;
+          totalExtractedBytes = extracted.totalExtractedBytes;
+        }
 
         const shareId = crypto.randomBytes(24).toString('base64url');
         const deleteToken = crypto.randomBytes(32).toString('base64url');
@@ -369,10 +485,9 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
         const createdMs = nowFn();
         const createdAt = new Date(createdMs).toISOString();
         const { expiresAtMs, expiresAt } = resolveExpiryTimestamp(expiryOption, createdMs);
-        const archiveName = sanitizeArchiveFilename(uploadedFile.originalname || 'archive.zip');
 
         const sensitiveWarnings = detectSensitiveFilenames(
-          extracted.files.map((item) => item.file.relativePath),
+          extractedFiles.map((item) => item.file.relativePath),
         );
 
         const contextResult = buildContextMarkdown({
@@ -380,7 +495,7 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
           archiveName,
           createdAt,
           expiresAt,
-          entries: extracted.files,
+          entries: extractedFiles,
           maxContextBytes: config.maxContextMdBytes,
         });
 
@@ -389,7 +504,7 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
           archiveName,
           createdAt,
           expiresAt,
-          totalExtractedBytes: extracted.totalExtractedBytes,
+          totalExtractedBytes,
           sensitiveWarnings,
           files: contextResult.updatedFiles,
         });
@@ -402,7 +517,7 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
           expiresAtMs,
           expiryOption,
           totalFiles: contextResult.updatedFiles.length,
-          totalExtractedBytes: extracted.totalExtractedBytes,
+          totalExtractedBytes,
           contextIncludedCount: contextResult.includedCount,
           contextOmittedCount: contextResult.omittedCount,
           sensitiveWarnings,
@@ -413,7 +528,7 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
 
         await storage.saveShare({
           share: shareRecord,
-          blobTempPaths: extracted.extractedBlobPaths,
+          blobTempPaths: extractedBlobPaths,
           contextMd: contextResult.contextMd,
           manifestJson,
         });
@@ -816,9 +931,12 @@ export async function createZipLinkApp(options: CreateAppOptions = {}): Promise<
 
     const zipped = zipSync(zipEntries, { level: 6 });
     const hasEdits = share.files.some((f) => f.isEdited);
+    const baseZipName = share.archiveName.toLowerCase().endsWith('.zip')
+      ? share.archiveName
+      : `${share.archiveName.replace(/\.pdf$/i, '')}.zip`;
     const rawZipName = hasEdits
-      ? share.archiveName.replace(/\.zip$/i, '') + '-edited.zip'
-      : share.archiveName;
+      ? baseZipName.replace(/\.zip$/i, '') + '-edited.zip'
+      : baseZipName;
     const { asciiFallback, utf8Encoded } = sanitizeContentDispositionFilename(rawZipName);
 
     res.setHeader('Content-Type', 'application/zip');

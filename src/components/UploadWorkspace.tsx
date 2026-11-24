@@ -1,5 +1,5 @@
 import React, { useId, useRef, useState } from 'react';
-import { Upload, AlertTriangle, FileArchive, ShieldAlert, Check } from 'lucide-react';
+import { Upload, AlertTriangle, FileArchive, FileText, ShieldAlert, Check } from 'lucide-react';
 import type {
   AppLimitsInfo,
   ExpiryOption,
@@ -8,6 +8,7 @@ import type {
 } from '../shared/types.ts';
 import { formatBytes } from '../shared/zipSecurity.ts';
 import { inspectZipFileInBrowser } from '../shared/zipInspect.ts';
+import { hasPdfMagicHeader, isPdfFilename } from '../shared/pdfUtils.ts';
 
 interface UploadWorkspaceProps {
   limits: AppLimitsInfo | null;
@@ -62,8 +63,24 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
     if (file.size > maxCompressedBytes) {
       setSelectedFile(null);
       setErrorMessage(
-        `Archive is ${formatBytes(file.size)}, which exceeds the ${formatBytes(maxCompressedBytes)} compressed upload limit.`,
+        `File is ${formatBytes(file.size)}, which exceeds the ${formatBytes(maxCompressedBytes)} upload limit.`,
       );
+      return;
+    }
+
+    if (isPdfFilename(file.name) || file.type === 'application/pdf') {
+      try {
+        const headBytes = new Uint8Array(await file.slice(0, 1024).arrayBuffer());
+        if (!hasPdfMagicHeader(headBytes)) {
+          setSelectedFile(null);
+          setErrorMessage('This .pdf file does not begin with a valid %PDF- signature.');
+          return;
+        }
+      } catch {
+        // Server performs authoritative PDF validation
+      }
+      setSelectedFile(file);
+      setInspectedCount(1);
       return;
     }
 
@@ -161,12 +178,12 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
             className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl lg:text-[42px] lg:leading-[1.12]"
             style={{ textWrap: 'balance' }}
           >
-            Turn any ZIP archive into an expiring share page, editor, and context.md
+            Turn any ZIP or PDF into an expiring share page, editor &amp; reader
           </h1>
           <p className="max-w-2xl text-base leading-relaxed text-slate-600 dark:text-slate-300">
-            Upload a ZIP file to safely extract its contents on the server into an unlisted,
-            expiring web page with syntax-highlighted code viewing, owner-authorized editing with
-            diffs, edited ZIP downloads, and a deterministic{' '}
+            Upload a ZIP archive or PDF document into an unlisted, expiring web workspace with
+            syntax-highlighted code editing, owner diffs, browser-side PDF reading, image export,
+            optional local OCR, and a deterministic{' '}
             <code className="font-mono text-sm text-slate-800 dark:text-slate-200">context.md</code>.
           </p>
 
@@ -201,14 +218,14 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
         <form
           onSubmit={handleUploadSubmit}
           className="rounded-xl border border-slate-200 bg-white p-6 space-y-6 dark:border-slate-800 dark:bg-slate-900"
-          aria-label="Upload ZIP archive"
+          aria-label="Upload ZIP archive or PDF document"
         >
           <div>
             <label
               htmlFor={fileInputId}
               className="block text-sm font-semibold text-slate-900 dark:text-slate-100 mb-2"
             >
-              1. Choose ZIP archive
+              1. Choose ZIP archive or PDF document
             </label>
             <div
               onDragOver={(e) => {
@@ -227,7 +244,7 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
                 ref={fileInputRef}
                 id={fileInputId}
                 type="file"
-                accept=".zip,application/zip,application/x-zip-compressed"
+                accept=".zip,.pdf,application/zip,application/x-zip-compressed,application/pdf"
                 disabled={isUploading}
                 tabIndex={-1}
                 aria-hidden="true"
@@ -240,7 +257,11 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
 
               <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                 {selectedFile ? (
-                  <FileArchive className="h-5 w-5 text-blue-700 dark:text-blue-400" aria-hidden="true" />
+                  isPdfFilename(selectedFile.name) ? (
+                    <FileText className="h-5 w-5 text-blue-700 dark:text-blue-400" aria-hidden="true" />
+                  ) : (
+                    <FileArchive className="h-5 w-5 text-blue-700 dark:text-blue-400" aria-hidden="true" />
+                  )
                 ) : (
                   <Upload className="h-5 w-5" aria-hidden="true" />
                 )}
@@ -253,7 +274,11 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
                   </div>
                   <div className="font-mono text-xs tabular-nums text-slate-500 dark:text-slate-400">
                     {formatBytes(selectedFile.size)}
-                    {inspectedCount !== null ? ` · ${inspectedCount} files detected` : ''}
+                    {isPdfFilename(selectedFile.name)
+                      ? ' · PDF document (read-only PDF reader)'
+                      : inspectedCount !== null
+                        ? ` · ${inspectedCount} files detected`
+                        : ''}
                   </div>
                   <div className="pt-2">
                     <button
@@ -262,14 +287,15 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
                       onClick={() => fileInputRef.current?.click()}
                       className="text-sm font-medium text-blue-700 hover:text-blue-800 hover:underline dark:text-blue-400 dark:hover:text-blue-300 focus-visible:outline-2 focus-visible:outline-blue-600"
                     >
-                      Choose a different ZIP
+                      Choose a different file
                     </button>
                   </div>
                 </div>
               ) : (
                 <div className="mt-3 space-y-2">
                   <p className="text-sm text-slate-700 dark:text-slate-300">
-                    Drag and drop a <code className="font-mono text-xs">.zip</code> file here, or
+                    Drag and drop a <code className="font-mono text-xs">.zip</code> or{' '}
+                    <code className="font-mono text-xs">.pdf</code> file here, or
                   </p>
                   <button
                     type="button"
@@ -280,7 +306,7 @@ export const UploadWorkspace: React.FC<UploadWorkspaceProps> = ({ limits, onUplo
                     Browse files
                   </button>
                   <p className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                    Max {formatBytes(maxCompressedBytes)} compressed · {formatBytes(maxExtractedBytes)} extracted · {maxEntryCount} entries
+                    Max {formatBytes(maxCompressedBytes)} upload · {formatBytes(maxExtractedBytes)} extracted · {maxEntryCount} entries
                   </p>
                 </div>
               )}

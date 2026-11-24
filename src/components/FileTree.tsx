@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FileText, FileCode, File, Folder, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, FileCode, File, Folder, Search, BookOpen } from 'lucide-react';
 import type { ShareFileEntry } from '../shared/types.ts';
 import { formatBytes } from '../shared/zipSecurity.ts';
+import { isPdfFilename } from '../shared/pdfUtils.ts';
 import { buildFileTree, type FileTreeNode } from '../utils/fileTree.ts';
 
 interface FileTreeProps {
@@ -45,6 +46,9 @@ export const FileTree: React.FC<FileTreeProps> = ({
   };
 
   const renderFileIcon = (entry: ShareFileEntry) => {
+    if (isPdfFilename(entry.relativePath)) {
+      return <BookOpen className="h-4 w-4 shrink-0 text-rose-700 dark:text-rose-400" aria-hidden="true" />;
+    }
     if (!entry.isText) {
       return <File className="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />;
     }
@@ -90,6 +94,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
     const isSelected = selectedView.kind === 'file' && selectedView.fileId === node.entry.id;
     const isDirty = dirtyFileId === node.entry.id;
+    const isPdf = isPdfFilename(node.entry.relativePath);
 
     return (
       <li key={`file:${node.entry.id}`}>
@@ -97,6 +102,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
           type="button"
           onClick={() => onSelectFile(node.entry)}
           aria-current={isSelected ? 'true' : undefined}
+          aria-label={isPdf ? `Open PDF ${node.name}` : undefined}
           style={{ paddingLeft: `${paddingLeft + 20}px` }}
           className={`flex w-full items-center justify-between gap-2 py-2 pr-3 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${
             isSelected
@@ -109,7 +115,11 @@ export const FileTree: React.FC<FileTreeProps> = ({
             <span className="truncate">{node.name}</span>
           </span>
           <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums">
-            {isDirty ? (
+            {isPdf ? (
+              <span className="font-sans font-semibold text-rose-700 dark:text-rose-400">
+                Open PDF
+              </span>
+            ) : isDirty ? (
               <span
                 className="font-semibold text-amber-700 dark:text-amber-400"
                 title="Unsaved changes"
